@@ -11,7 +11,7 @@ README.md
 	
 	* Уже реализованы системы ввода/вывода; работа с файлами формата MDFS; создан системный язык MDcode (будет улучшаться); имеется работа с дисками;
 	
-	* Проекту уже больше полутора месяцев
+	* Проекту уже больше 3х месяцев
 	
 	* Имеются сборки iso для Vmware и сборки bin файлов для QEMU
 Перед использованием Операционной системы ознакомьтесь с условиями лицензии в файле LICENCE.txt (русская и английская версия входят туда)
@@ -31,3 +31,4 @@ About the product:
 Before using the operating system, please read the license terms in the LICENCE.txt file (both Russian and English versions are included).
 
 Documentation for the MDcode system programming language is located in the DOCUMENTATION_MDCODE.txt file.
+
