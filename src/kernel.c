@@ -55,6 +55,18 @@ int cur_y = 0;
 #define OP_PRINT 0x03
 #define OP_EXIT 0x04
 #define OP_SYS_EXEC 0x05
+#define OP_CLEAR_BUF 0x06
+#define OP_CALC 0x07
+#define OP_GOTO 0x08
+#define OP_EQ 0x09
+#define OP_ABS 0x0A
+#define OP_ABS_GOTO 0x0B
+#define OP_JMP_IF_TRUE 0x0C
+#define OP_JMP_IF_FALSE 0x0D
+#define OP_DELAY 0x0E
+#define OP_RAW_TIME 0x0F
+#define OP_SET_REG 0x10
+#define OP_LOAD_REG 0x11
 
 // F symbols ☻
 #define F1 0x3B
@@ -101,6 +113,15 @@ typedef struct {
 	unsigned char month;
 	unsigned short year;
 } Time;
+
+typedef struct {
+	unsigned char second;
+	unsigned char minute;
+	unsigned char hour;
+	unsigned char day;
+	unsigned char month;
+	unsigned char year;
+} RTC_Time;
 
 // Superblock - magic fs name (MDFS), version MDFS, sector size, count inodes, bit card (free blocks) and reserved bytes for size Superblock is 512 bytes
 // File Entry - name, size, char and used - inited in system or not
@@ -210,13 +231,14 @@ typedef struct {
 	unsigned char readonly;
 } StDev;
 
-//struct executor for execute code in *Virtual mode*
+//struct executor for execute code in *Execute mode*
 
 typedef struct {
 	unsigned char* program;
 	unsigned int program_c;
 	char work_stack[256];
 	unsigned int stack_pointer;
+	unsigned char registers[8][16];
 	unsigned char flags;
 } Executor;
 
@@ -249,14 +271,14 @@ static const char scancodes[128] = {
 static const char scancodes_sh[128] = {
 	0, 27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
 	'\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n',
-	0, 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '\"', '|',
-	0, '\\', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, '*',
+	0, 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '\"', '~',
+	0, '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0, '*',
 	0, ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '7', '8', '9', '-',
 	'4', '5', '6', '+', '1', '2', '3', '0', '.', 0, 0, 0, 0, 0
 };
 //init vars...
-static char input_buf[BUFFER_SIZE];
-static char input_buf_exec[BUFFER_SIZE];
+static char input_buf[BUFFER_SIZE] = {'\0'};
+static char input_buf_exec[BUFFER_SIZE] = {'\0'};
 static unsigned int buf_id = 0;
 
 static int input_mode = 0;
@@ -264,6 +286,8 @@ static int hlt_input_mode = 0;
 static int input_exec_ready = 0;
 
 static int in_format = 0;
+
+static int debug_mode = 0;
 
 // for lddsk correctly work
 static struct DirEntry dir_entries[MAX_FILES] __attribute__((aligned(4)));
@@ -309,9 +333,10 @@ char strchr(const char* str, char c);
 int isspace(char symbol);
 int isnumber(char symbol);
 //function prototypes for translate x to y
-void dig_to_str(unsigned number, char * buffer);
+void digrostr(unsigned number, char * buffer);
 void lglg_to_str(unsigned long long number, char * buffer);
 int strtodig(const char *str, int *result);
+int strtoudig(const char *str, unsigned int *result);
 
 void keyboard_handler();
 extern int keyboard_handler_entry();
@@ -324,11 +349,17 @@ void rest();
 void push_time();
 void push_date();
 void push_unix_t();
+void set_rtc_time(RTC_Time* time);
+int is_vis_year(int year);
+void unixt_to_date(unsigned long unixt, int *second, int *minute, int *hour, int *day, int *month, int *year);
 
 unsigned char read_cmos(unsigned char registr);
+void write_cmos(unsigned char addr, unsigned char value);
 unsigned char is_upd();
 unsigned char read_cmos_s(unsigned char registr);
 unsigned char bcd_to_bin(unsigned char bcd);
+unsigned char bin_to_bcd(unsigned char bin);
+
 
 Time get_t();
 unsigned int get_unix_t();
@@ -655,7 +686,7 @@ void check_comm(const char* comm){
 				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file\n  erase - delete all files\n  ls - list all files,\n  add <filename> <text> - add text in file\n  rnm <old filename> <new filename> - rename file");
 			}
 			else if (streq(args, "--advanced") == 0){
-				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal\n  lddsk <dev> - load data from <dev> to RAM\n  svdsk - save data from RAM\n  lsdevs - list of available device\n  formt <dev> - format <dev> and set MDFS on <dev>\n  exec <filename> - execute file in MDcode\n  comdummy <pointer>=<command> - create a custom command\n  lscomdum - list of created comdummy\n  chcomdum <pointer>=<command> - change command in comdummy");
+				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal\n  lddsk <dev> - load data from <dev> to RAM\n  svdsk - save data from RAM\n  lsdevs - list of available device\n  formt <dev> - format <dev> and set MDFS on <dev>\n  exec <filename> - execute file in MDcode\n  comdummy <pointer>=<command> - create a custom command\n  lscomdum - list of created comdummy\n  chcomdum <pointer>=<command> - change command in comdummy\n  chdbg - on/off debug mode\n  timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date\n ");
 			}
 		} else {
 			push_text("\nFor more commands print help <--standart> or help <--filew> or help <--advanced>");
@@ -680,7 +711,7 @@ void check_comm(const char* comm){
 		rest();
 	}
 	else if (streq(comm, "abt") == 0) {
-		push_text("\nABOUT:\n  Moon OS Delta\n  programmer and author - 'Zondrobonie' Ivan\n  special thanks - BFG (chat), Imancat (for code for comdummy) and others...");
+		push_text("\nABOUT:\n  Moon OS Delta\n  programmer and author - 'Zondrobonie' Ivan\n  for news: t.me/MoonOSDelta \n  Special thanks - BFG (chat), Imancat (for code for comdummy) and others...");
 	}
 	else if (streq(comm, "mdver") == 0) {
 		
@@ -690,10 +721,10 @@ void check_comm(const char* comm){
 		char vde[6];
 		char hde[6];
 		
-		push_text("\nMoon OS Delta\nversion - 1.0 October 4th update, Standart\n\n");
+		push_text("\nMoon OS Delta\nversion - 1.1 November update Vol.1, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta \n\n");
 		
 		push_text("Available memory - ");
-		dig_to_str(get_memory_size(), mem);
+		digrostr(get_memory_size(), mem);
 		push_text(mem);
 		push_text(" KB\n");
 		
@@ -703,8 +734,8 @@ void check_comm(const char* comm){
 		
 		
 		push_text("\nScreen size: ");
-		dig_to_str(get_vde(), vde);
-		dig_to_str(get_hde(), hde);
+		digrostr(get_vde(), vde);
+		digrostr(get_hde(), hde);
 		push_text(vde);
 		push_char('x');
 		push_text(hde);
@@ -845,8 +876,8 @@ void check_comm(const char* comm){
 		
 		push_text("\nBeep at ");
 		
-		dig_to_str(freq, frq);
-		dig_to_str(duration, dur);
+		digrostr(freq, frq);
+		digrostr(duration, dur);
 		
 		push_text(frq);
 		push_text("Hz for ");
@@ -1045,7 +1076,7 @@ void check_comm(const char* comm){
 					if (!found){
 						if (comdummy_count < MAX_DUMMY) {
 							//list of reserved names (command names)
-							if ( comdummies[comdummy_count].name == "help" || comdummies[comdummy_count].name == "cls" || comdummies[comdummy_count].name == "echo" || comdummies[comdummy_count].name == "logoff" || comdummies[comdummy_count].name == "rest" || comdummies[comdummy_count].name == "abt" || comdummies[comdummy_count].name == "mdver" || comdummies[comdummy_count].name == "time" || comdummies[comdummy_count].name == "touch" || comdummies[comdummy_count].name == "wr" || comdummies[comdummy_count].name == "rd" || comdummies[comdummy_count].name == "del" || comdummies[comdummy_count].name == "erase" || comdummies[comdummy_count].name == "ls" || comdummies[comdummy_count].name == "add" || comdummies[comdummy_count].name == "rnm" || comdummies[comdummy_count].name == "beep" || comdummies[comdummy_count].name == "lddsk" || comdummies[comdummy_count].name == "svdsk" || comdummies[comdummy_count].name == "lsdevs" || comdummies[comdummy_count].name == "formt" || comdummies[comdummy_count].name == "exec" || comdummies[comdummy_count].name == "comdummy" || comdummies[comdummy_count].name == "lscomdum" || comdummies[comdummy_count].name == "chcomdum"){
+							if ( comdummies[comdummy_count].name == "help" || comdummies[comdummy_count].name == "cls" || comdummies[comdummy_count].name == "echo" || comdummies[comdummy_count].name == "logoff" || comdummies[comdummy_count].name == "rest" || comdummies[comdummy_count].name == "abt" || comdummies[comdummy_count].name == "mdver" || comdummies[comdummy_count].name == "time" || comdummies[comdummy_count].name == "touch" || comdummies[comdummy_count].name == "wr" || comdummies[comdummy_count].name == "rd" || comdummies[comdummy_count].name == "del" || comdummies[comdummy_count].name == "erase" || comdummies[comdummy_count].name == "ls" || comdummies[comdummy_count].name == "add" || comdummies[comdummy_count].name == "rnm" || comdummies[comdummy_count].name == "beep" || comdummies[comdummy_count].name == "lddsk" || comdummies[comdummy_count].name == "svdsk" || comdummies[comdummy_count].name == "lsdevs" || comdummies[comdummy_count].name == "formt" || comdummies[comdummy_count].name == "exec" || comdummies[comdummy_count].name == "comdummy" || comdummies[comdummy_count].name == "lscomdum" || comdummies[comdummy_count].name == "chcomdum" || comdummies[comdummy_count].name == "hltmode" || comdummies[comdummy_count].name == "chdbg" || comdummies[comdummy_count].name == "timeset"){
 								push_text("\nError: Used reserved word in name!");
 								return;
 							}
@@ -1115,6 +1146,103 @@ void check_comm(const char* comm){
 					}
 				}
 			}
+		}
+	}
+	else if (streq(comm, "chdbg") == 0){
+		debug_mode = (!debug_mode);
+		char db[2];
+		digrostr(debug_mode, db);
+		
+		push_text("\nChanged [DEBUG MODE] to '");
+		push_text(db);
+		push_text("'!\n");
+		
+	}
+	else if (streq(comm, "timeset") == 0){
+		if (args && *args) {
+
+			char args_copy[64];
+			strnumbercopy(args_copy, args, sizeof(args_copy)-1);
+			args_copy[sizeof(args_copy)-1] = '\0';
+			
+			char* flag_str = strtok(args_copy, " ");
+			char* time_str = strtok((void *)0, " ");
+
+			if (streq(flag_str, "time") == 0){
+				char * hour = strtok(time_str, ":");
+				char * minute = strtok((void *)0, ":");
+				char * second = strtok((void *)0, ":");
+				
+				RTC_Time *rtc;
+				Time prev_time = get_t();
+				
+				strtodig(second, (int *)&rtc->second);
+				strtodig(minute, (int *)&rtc->minute);
+				strtodig(hour, (int *)&rtc->hour);
+				
+				rtc->day = prev_time.day;
+				rtc->month = prev_time.month;
+				rtc->year = (prev_time.year - 2000);
+				
+				if (rtc->second > 59 || rtc->minute > 59 || rtc->hour >23){
+					push_text("\nError! Invalid time!");
+				}
+				else {
+					set_rtc_time((RTC_Time*)rtc);
+					push_text("\nNew time setted!");
+				}
+			}
+			else if (streq(flag_str, "date") == 0){
+				char * day = strtok(time_str, "|");
+				char * month = strtok((void *)0, "|");
+				char * year = strtok((void *)0, "|");
+				
+				unsigned int year_n = 0;
+				
+				RTC_Time *rtc;
+				Time prev_time = get_t();
+				
+				strtodig(day, (int *)&rtc->day);
+				strtodig(month, (int *)&rtc->month);
+				strtodig(year, &year_n);
+				
+				rtc->second = prev_time.second;
+				rtc->minute = prev_time.minute;
+				rtc->hour = prev_time.hour;
+				
+				if (rtc->day < 1 || rtc->day > 31 || rtc->month < 1 || rtc->month > 12 || year_n < 2000 || year_n > 2099){
+					push_text("\nError! Invalid date!");
+				}
+				else {
+					rtc->year = (year_n - 2000);
+					
+					set_rtc_time((RTC_Time*)rtc);
+					push_text("\nNew date setted!");
+				}
+			}
+			else if (streq(flag_str, "unixt") == 0) {
+				unsigned int timestamp;
+				strtoudig(time_str, &timestamp);
+				
+				int second, minute, hour, day, month, year;
+				unixt_to_date(timestamp, &second, &minute, &hour, &day, &month, &year);
+				
+				RTC_Time *rtc;
+				
+				rtc->second = second;
+				rtc->minute = minute;
+				rtc->hour = hour;
+				rtc->day = day;
+				rtc->month = month;
+				rtc->year = (year - 2000);
+				
+				set_rtc_time((RTC_Time*)rtc);
+				push_text("\nUnixt timestamp loaded!");
+			}
+			
+		}
+		else {
+			push_text("Usage: timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)>");
 		}
 	}
 	else if (streq(comm, "PASS COMMAND") == 0){
@@ -1202,6 +1330,15 @@ void keyboard_handler(){
 					
 					if (input_mode){
 						input_buf[buf_id] = '\0';
+						int i = 0;
+						
+						while (input_buf[i] == ' '){
+							input_buf[i] = '\0';
+							i++;
+						}
+						if (input_buf[0] == '\0' || buf_id == 0){
+							input_buf[0] = '`';
+						}
 						buf_id = 0;
 					
 						strcopy(input_buf_exec, input_buf);
@@ -1210,7 +1347,19 @@ void keyboard_handler(){
 					}
 					else {
 						input_buf[buf_id] = '\0';
-						check_comm(input_buf);
+						int i = 0;
+						
+						while (input_buf[i] == ' '){
+							input_buf[i] = '\0';
+							i++;
+						}
+						if (input_buf[0] == '\0' || buf_id == 0){
+							input_buf[0] = '`';
+							check_comm("PASS COMMAND");
+						}
+						else{
+							check_comm(input_buf);
+						}
 						buf_id = 0;
 					}
 				}
@@ -1355,6 +1504,11 @@ unsigned char read_cmos(unsigned char registr){
 	return inb(0x71);
 }
 
+void write_cmos(unsigned char addr, unsigned char value){
+	outb(0x70, addr);
+	outb(0x71, value);
+}
+
 unsigned char is_upd(){
 	return read_cmos(0x0A) & 0x80;
 }
@@ -1366,6 +1520,10 @@ unsigned char read_cmos_s(unsigned char registr){
 
 unsigned char bcd_to_bin(unsigned char bcd){
 	return (bcd & 0x0F) + ((bcd >> 4) * 10);
+}
+
+unsigned char bin_to_bcd(unsigned char bin){
+	return ((bin / 10) << 4) | (bin % 10);
 }
 
 Time get_t() {
@@ -1403,7 +1561,7 @@ unsigned int get_unix_t(){
 	return minutes * 60 + t.second;
 }
 
-void dig_to_str(unsigned int number, char * buffer) {
+void digrostr(unsigned int number, char * buffer) {
 	if (number == 0) {
 		buffer[0] = '0';
 		buffer[1] = '\0';
@@ -1445,9 +1603,9 @@ void push_time(){
 	
 	push_text("Time: ");
 	
-	dig_to_str(t.hour, hour_str);
-	dig_to_str(t.minute, min_str);
-	dig_to_str(t.second, sec_str);
+	digrostr(t.hour, hour_str);
+	digrostr(t.minute, min_str);
+	digrostr(t.second, sec_str);
 	
 	push_text(hour_str);
 	push_char(':');
@@ -1463,9 +1621,9 @@ void push_date(){
 	
 	push_text("Date: ");
 	
-	dig_to_str(t.day, day_str);
-	dig_to_str(t.month, month_str);
-	dig_to_str(t.year, year_str);
+	digrostr(t.day, day_str);
+	digrostr(t.month, month_str);
+	digrostr(t.year, year_str);
 	
 	push_text(day_str);
 	push_char('|');
@@ -1481,7 +1639,7 @@ void push_unix_t(){
 	unsigned int unix_t = get_unix_t();
 	
 	char unix_str[16];
-	dig_to_str(unix_t, unix_str);
+	digrostr(unix_t, unix_str);
 	
 	push_text("Unix time: ");
 	push_text(unix_str);
@@ -1614,7 +1772,7 @@ void files_list() {
 			push_text(mdfs.files[i].name);
 			
 			char size_str[16];
-			dig_to_str(mdfs.files[i].size, size_str);
+			digrostr(mdfs.files[i].size, size_str);
 			
 			push_text(" : ");
 			push_text(size_str);
@@ -1728,7 +1886,7 @@ int isspace(char symbol){
 }
 
 int isnumber (char symbol){
-	if (symbol == '0' || symbol == '1' || symbol == '2' || symbol == '3' || symbol == '4' || symbol == '5' || symbol == '6' || symbol == '7' || symbol == '8' || symbol == '9'){
+	if (symbol >= '0' && symbol <= '9'){
 		return 1;
 	}
 	return 0;
@@ -1748,6 +1906,27 @@ int strtodig(const char *str, int *result) {
     
     if (!isnumber(str[i])) return 0;
 
+
+    while (isnumber(str[i])) {
+        value = 10 * value + (str[i] - '0');
+        i++;
+    }
+    
+    *result = sign * value;
+    return 1;
+}
+int strtoudig(const char *str, unsigned int *result) {
+    int sign = 1, value = 0, i = 0;
+    
+    while (isspace(str[i])) i++;
+    
+    if (str[i] == '-') {
+        i++;
+    } else if (str[i] == '+') {
+        i++;
+    }
+    
+    if (!isnumber(str[i])) return 0;
 
     while (isnumber(str[i])) {
         value = 10 * value + (str[i] - '0');
@@ -2290,33 +2469,59 @@ int file_add_data(const char* filename, const char * data, unsigned int size){
 
 void interpret_program(unsigned char *program){
 	
-	setmemory(input_buf, ' ', sizeof(input_buf));
-	setmemory(input_buf_exec, ' ', sizeof(input_buf));
+	setmemory(input_buf, 0, sizeof(input_buf));
+	setmemory(input_buf_exec, 0, sizeof(input_buf));
 	
 	Executor state;
 	state.program = program;
 	state.program_c = 0;
+	setmemory(state.work_stack, 0, sizeof(state.work_stack));
 	state.stack_pointer = 0;
 	state.flags = 0;
 	
-	input_mode = 1;
-	
 	while(1) {
-		unsigned char opcode_arr[2];
+		unsigned char opcode_o_arr[2];
+		unsigned char opcode_t_arr[2];
 		
-		unsigned char opcode = state.program[state.program_c++];
-		unsigned int int_opcode;
+		unsigned int int_opcode_h;
+		unsigned int int_opcode = 0;
 		
-		opcode_arr[0] = opcode;
-		opcode_arr[1] = '\0';
-		if (isnumber(opcode)){
-			strtodig(opcode_arr, &int_opcode);
+		opcode_o_arr[0] = state.program[state.program_c++];
+		opcode_o_arr[1] = '\0';
+		opcode_t_arr[0] = state.program[state.program_c];
+		opcode_t_arr[1] = '\0';
+		
+		if (isnumber(opcode_o_arr[0])){
+			if (isnumber(opcode_t_arr[0]) && opcode_o_arr[0] != '0'){
+				strtodig(opcode_t_arr, &int_opcode);
+				strtodig(opcode_o_arr, &int_opcode_h);
+				
+				int_opcode_h = int_opcode_h * 10;
+				
+				state.program_c++;
+			}
+			else {
+				strtodig(opcode_o_arr, &int_opcode_h);
+			}
 		}
 		else {
 			continue;
 		}
-		
-		switch (int_opcode){
+		if (debug_mode){
+			
+			char address[10];
+			digrostr((state.program_c - 1), address);
+			
+			push_text("[DEBUG STACK] - ['");
+			push_text(state.work_stack);
+			push_text("'; command address (for goto) - '");
+			push_text(address);
+			push_text("', OP: '");
+			push_text(opcode_o_arr);
+			push_text(opcode_t_arr);
+			push_text("']\n");
+		}
+		switch ((int_opcode_h + int_opcode)){
 			case OP_PUSH_CHAR: {
 				char value = state.program[state.program_c++];
 				state.work_stack[state.stack_pointer++] = value;
@@ -2334,6 +2539,15 @@ void interpret_program(unsigned char *program){
 				break;
 			}
 			case OP_INPUT: {
+				
+				setmemory(input_buf, 0, sizeof(input_buf));
+				setmemory(input_buf_exec, 0, sizeof(input_buf));
+				
+				input_mode = 1;
+				input_exec_ready = 0;
+				buf_id = 0;
+				input_buf[0] = '\0';
+				
 				idt_ini();
 				
 				push_text("> ");
@@ -2344,10 +2558,14 @@ void interpret_program(unsigned char *program){
 					asm volatile("hlt");
 				}
 				input_exec_ready = 0;
+				input_mode = 0;
 				
 				for (char *p = input_buf_exec; *p != '\0'; p++){
 					state.work_stack[state.stack_pointer++] = *p;
 				}
+				state.work_stack[state.stack_pointer++] = '\0';
+				push_char('\n');
+				
 				break;
 			}
 			case OP_EXIT: {
@@ -2365,6 +2583,479 @@ void interpret_program(unsigned char *program){
 					i++;
 				}
 				state.stack_pointer = 0;
+				break;
+			}
+			case OP_CLEAR_BUF: {
+				
+				for (int i = 0; i < sizeof(state.work_stack); i++){
+					state.work_stack[i] = 0;
+				}
+				state.stack_pointer = 0;
+				break;
+			}
+			case OP_CALC: {
+				if (state.stack_pointer < 3) {
+					push_text("Run time error! Stack underflow!\nExit the program...\n");
+					input_mode = 0;
+					return;
+				}
+				char num1_str[32] = {0};
+				char num2_str[32] = {0};
+				char op = 0;
+
+				int num1_len = 0;
+				int num2_len = 0;
+    
+				int sp = state.stack_pointer - 1;
+
+				while (sp >= 0 && (state.work_stack[sp] == '\0' || state.work_stack[sp] == ' ')) {
+					sp--;
+				}
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					num2_str[num2_len++] = state.work_stack[sp];
+					sp--;
+				}
+				
+				for (int i = 0; i < num2_len / 2; i++) {
+					char temp = num2_str[i];
+					num2_str[i] = num2_str[num2_len - 1 - i];
+					num2_str[num2_len - 1 - i] = temp;
+				}
+				
+				while (sp >= 0 && (state.work_stack[sp] == ' ' || state.work_stack[sp] == '\0')) {
+					sp--;
+				}
+				
+				if (sp >= 0) {
+					op = state.work_stack[sp];
+					sp--;
+				}
+				
+				while (sp >= 0 && (state.work_stack[sp] == ' ' || state.work_stack[sp] == '\0')) {
+					sp--;
+				}
+				
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					num1_str[num1_len++] = state.work_stack[sp];
+					sp--;
+				}
+				
+				for (int i = 0; i < num1_len / 2; i++) {
+					char temp = num1_str[i];
+					num1_str[i] = num1_str[num1_len - 1 - i];
+					num1_str[num1_len - 1 - i] = temp;
+				}
+				
+				if (op == 0) {
+					push_text("\nRun time error: No operator found!\n");
+					input_mode = 0;
+					return;
+				}
+				
+				int num1 = 0, num2 = 0;
+				for (int i = 0; i < num1_len; i++) {
+					num1 = num1 * 10 + (num1_str[i] - '0');
+				}
+				
+				if (state.work_stack[sp] == '-'){
+					num1 = -num1;
+					sp--;
+				}
+				else{
+					asm("hlt");
+				}
+				
+				for (int i = 0; i < num2_len; i++) {
+					num2 = num2 * 10 + (num2_str[i] - '0');
+				}
+				
+				int answer;
+				switch (op) {
+					case '+': 
+						answer = num1 + num2;
+						break;
+					case '-': 
+						answer = num1 - num2;
+						break;
+					case '*': 
+						answer = num1 * num2;
+						break;
+					case '/': 
+						if (num2 == 0) {
+							push_text("\nRun time error! Division by zero!\nExit the program...\n");
+							input_mode = 0;
+							return;
+						}
+						answer = num1 / num2;
+						break;
+					default:
+						push_text("\nRun time error! Unknown operator (");
+						push_char(op);
+						push_text(")\nExit the program...\n");
+						input_mode = 0;
+						return;
+				}
+				
+				state.stack_pointer = sp + 1;
+				
+				if (answer < 0){
+					state.work_stack[state.stack_pointer++] = '-';
+					answer = -answer;
+				}
+				
+				char strans[32];
+				int temp = answer;
+				int digits = 0;
+				
+				do {
+					digits++;
+					temp /= 10;
+				} while (temp > 0);
+				
+				temp = answer;
+				for (int i = digits - 1; i >= 0; i--) {
+					strans[i] = '0' + (temp % 10);
+					temp /= 10;
+				}
+				strans[digits] = '\0';
+				
+				for (int i = 0; i < digits; i++) {
+					state.work_stack[state.stack_pointer++] = strans[i];
+				}
+    
+				break;
+
+			}
+			case OP_GOTO:{
+				state.program_c++;
+				
+				char addr_str[8] = {0};
+				int addr_len = 0;
+				int sp = state.stack_pointer - 1;
+
+				while (sp >= 0 && (state.work_stack[sp] == '\0' || state.work_stack[sp] == ' ')) {
+					sp--;
+				}
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					addr_str[addr_len++] = state.work_stack[sp];
+					sp--;
+				}
+				for (int i = 0; i < addr_len / 2; i++){
+					char temp = addr_str[i];
+					addr_str[i] = addr_str[addr_len -1 -i];
+					addr_str[addr_len -1 -i] = temp;
+				}
+				
+				strtodig(addr_str, &state.program_c);
+				if (state.program_c > MAX_FILE_SIZE){
+					state.program_c = 0;
+				}
+				state.stack_pointer = sp + 1;
+				break;
+			}
+			case OP_ABS_GOTO: {
+				state.program_c = 0;
+				break;
+			}
+			case OP_EQ: {
+				if (state.stack_pointer < 3) {
+					push_text("Run time error! Stack underflow!\nExit the program...\n");
+					input_mode = 0;
+					return;
+				}
+				char num1_str[32] = {0};
+				char num2_str[32] = {0};
+				char op = 0;
+
+				int num1_len = 0;
+				int num2_len = 0;
+    
+				int sp = state.stack_pointer - 1;
+				
+				while (sp >= 0 && (state.work_stack[sp] == '\0' || state.work_stack[sp] == ' ')) {
+					sp--;
+				}
+				
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					num2_str[num2_len++] = state.work_stack[sp];
+					sp--;
+				}
+				
+				for (int i = 0; i < num2_len / 2; i++) {
+					char temp = num2_str[i];
+					num2_str[i] = num2_str[num2_len - 1 - i];
+					num2_str[num2_len - 1 - i] = temp;
+				}
+				
+				while (sp >= 0 && (state.work_stack[sp] == ' ' || state.work_stack[sp] == '\0')) {
+					sp--;
+				}
+				
+				if (sp >= 0) {
+					op = state.work_stack[sp];
+					sp--;
+				}
+				
+				while (sp >= 0 && (state.work_stack[sp] == ' ' || state.work_stack[sp] == '\0')) {
+					sp--;
+				}
+				
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					num1_str[num1_len++] = state.work_stack[sp];
+					sp--;
+				}
+				
+				for (int i = 0; i < num1_len / 2; i++) {
+					char temp = num1_str[i];
+					
+					num1_str[i] = num1_str[num1_len - 1 - i];
+					num1_str[num1_len - 1 - i] = temp;
+				}
+				
+				int num1 = 0, num2 = 0;
+				
+				for (int i = 0; i < num1_len; i++) {
+					num1 = num1 * 10 + (num1_str[i] - '0');
+				}
+				
+				for (int i = 0; i < num2_len; i++) {
+					num2 = num2 * 10 + (num2_str[i] - '0');
+				}
+				
+				int result;
+				switch (op) {
+					case '=': 
+						result = (num1 == num2);
+						break;
+					case '>': 
+						result = (num1 > num2);
+						break;
+					case '<': 
+						result = (num1 < num2);
+						break;
+					case '!': 
+						result = (num1 != num2);
+						break;
+					default:
+						push_text("\nRun time error! Unknown comparison operator:(");
+						push_char(op);
+						push_text(")\n");
+						input_mode = 0;
+						return;
+				}
+				state.stack_pointer = sp + 1;
+    
+                //1 - eq; 0 - not eq
+				state.work_stack[state.stack_pointer++] = result ? '1' : '0';
+    
+				break;
+			}
+			case OP_JMP_IF_TRUE: {
+				if (state.stack_pointer < 1) {
+					push_text("Run time error! Stack underflow!\nExit the program...\n");
+					input_mode = 0;
+					return;
+				}
+				
+				state.program_c++;
+				char condition = state.work_stack[--state.stack_pointer];
+    
+				if (condition == '1') {
+					state.program_c++;
+					unsigned int address = 0;
+					while (state.program_c < MAX_FILE_SIZE && isnumber(state.program[state.program_c])) {
+						address = address * 10 + (state.program[state.program_c] - '0');
+						state.program_c++;
+					}
+					
+					if (state.program_c > MAX_FILE_SIZE){
+						state.program_c = 0;
+					}
+        
+					state.program_c = address;
+				} else {
+					state.program_c++; 
+					while (state.program_c < MAX_FILE_SIZE && isnumber(state.program[state.program_c])) {
+						state.program_c++;
+					}
+				}
+				break;
+			}
+			case OP_JMP_IF_FALSE: {
+				if (state.stack_pointer < 1) {
+					push_text("Run time error! Stack underflow!\nExit the program...\n");
+					input_mode = 0;
+					return;
+				}
+				state.program_c++;
+				char condition = state.work_stack[--state.stack_pointer];
+    
+				if (condition == '0') {
+					state.program_c++;
+					unsigned int address = 0;
+					while (state.program_c < MAX_FILE_SIZE && isnumber(state.program[state.program_c])) {
+						address = address * 10 + (state.program[state.program_c] - '0');
+						state.program_c++;
+					}
+					
+					if (state.program_c > MAX_FILE_SIZE){
+						state.program_c = 0;
+					}
+        
+					state.program_c = address;
+				} else {
+					state.program_c++; 
+					while (state.program_c < MAX_FILE_SIZE && isnumber(state.program[state.program_c])) {
+						state.program_c++;
+					}
+				}
+				break;
+			}
+			case OP_ABS: {
+				char num1_str[32] = {0};
+				char op;
+				
+				int num1_len = 0;
+				int sp = state.stack_pointer - 1;
+
+				while (sp >= 0 && (state.work_stack[sp] == '\0' || state.work_stack[sp] == ' ')) {
+					sp--;
+				}
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					num1_str[num1_len++] = state.work_stack[sp];
+					sp--;
+				}
+				
+				for (int i = 0; i < num1_len / 2; i++) {
+					char temp = num1_str[i];
+					num1_str[i] = num1_str[num1_len - 1 - i];
+					num1_str[num1_len - 1 - i] = temp;
+				}
+				
+				if (sp >= 0) {
+					op = state.work_stack[sp];
+					sp--;
+				}
+				
+				int num1 = 0;
+				
+				for (int i = 0; i < num1_len; i++) {
+					num1 = num1 * 10 + (num1_str[i] - '0');
+				}
+				
+				if (op == '-'){
+					num1 = -num1;
+				}
+				
+				if (num1 < 0){
+					num1 = -num1;
+				}
+				else{
+					num1 = num1;
+				}
+				
+				state.stack_pointer = sp + 1;
+				
+				char strans[32];
+				int temp = num1;
+				int digits = 0;
+				
+				do {
+					digits++;
+					temp /= 10;
+				} while (temp > 0);
+				
+				temp = num1;
+				for (int i = digits - 1; i >= 0; i--) {
+					strans[i] = '0' + (temp % 10);
+					temp /= 10;
+				}
+				strans[digits] = '\0';
+				
+				for (int i = 0; i < digits; i++) {
+					state.work_stack[state.stack_pointer++] = strans[i];
+				}
+    
+				break;
+				
+			}
+			case OP_DELAY: {
+				char num1_str[32] = {0};
+				
+				int num1_len = 0;
+				int sp = state.stack_pointer - 1;
+
+				while (sp >= 0 && (state.work_stack[sp] == '\0' || state.work_stack[sp] == ' ')) {
+					sp--;
+				}
+				while (sp >= 0 && isnumber(state.work_stack[sp])) {
+					num1_str[num1_len++] = state.work_stack[sp];
+					sp--;
+				}
+				
+				for (int i = 0; i < num1_len / 2; i++) {
+					char temp = num1_str[i];
+					num1_str[i] = num1_str[num1_len - 1 - i];
+					num1_str[num1_len - 1 - i] = temp;
+				}
+				
+				int num1 = 0;
+				
+				for (int i = 0; i < num1_len; i++) {
+					num1 = num1 * 10 + (num1_str[i] - '0');
+				}
+				
+				slp(num1);
+				push_text(num1_str);
+				break;
+				
+				
+			}
+			case OP_RAW_TIME: {
+				unsigned long unixt = get_unix_t();
+				
+				char time_str[16];
+				digrostr(unixt, time_str);
+				
+				for (int i = 0; time_str[i] != '\0'; i++){
+					state.work_stack[state.stack_pointer++] = time_str[i];
+				}
+				break;
+				
+			}
+			case OP_SET_REG: {
+				state.program_c++;
+				int reg_num = state.program[state.program_c] - '0';
+				if (reg_num >= 0 && reg_num <= 7){
+					strnumbercopy(state.registers[reg_num], state.work_stack, 16);
+					if (state.stack_pointer >= 16){
+						state.stack_pointer -= 16;
+					}
+					else {
+						state.stack_pointer = 0;
+					}
+				}
+				else {
+					push_text("\nRun time error! Unknown register number!\nExit the program...\n");
+					input_mode = 0;
+					return;
+				}
+				break;
+			}
+			case OP_LOAD_REG: {
+				state.program_c++;
+				int reg_num = state.program[state.program_c] - '0';
+				if (reg_num >= 0 && reg_num <= 7){
+					state.stack_pointer = 0;
+					for (int i = 0; state.registers[reg_num][i] != '\0'; i++){
+						state.work_stack[state.stack_pointer++] = state.registers[reg_num][i];
+					}
+				}
+				else {
+					push_text("\nRun time error! Unknown register number!\nExit the program...\n");
+					input_mode = 0;
+					return;
+				}
 				break;
 			}
 			default:
@@ -2428,4 +3119,60 @@ void hltmode(){
 	}
 	
 	push_text("System waking up...");
+}
+
+void set_rtc_time(RTC_Time* time){
+	
+	unsigned char prev = inb(0x70);
+	outb(0x70, prev | 0x80);
+	
+	write_cmos(0x00, bin_to_bcd(time->second));
+	write_cmos(0x02, bin_to_bcd(time->minute));
+	write_cmos(0x04, bin_to_bcd(time->hour));
+	write_cmos(0x07, bin_to_bcd(time->day));
+	write_cmos(0x08, bin_to_bcd(time->month));
+	write_cmos(0x09, bin_to_bcd(time->year));
+	
+	outb(0x70, prev);
+}
+
+int is_vis_year(int year){
+	return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+void unixt_to_date(unsigned long unixt, int *second, int *minute, int *hour, int *day, int *month, int *year){
+	const int SECONDS_PER_DAY = 86400;
+	const int SECONDS_PER_HOUR = 3600;
+	const int SECONDS_PER_MINUTE = 60;
+	
+	const int days_arr[2][12] = {
+		{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
+		{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+	};
+	
+	unsigned long days = unixt / SECONDS_PER_DAY;
+	*second = unixt % SECONDS_PER_DAY;
+	
+	*hour = *second / SECONDS_PER_HOUR;
+	*second %= SECONDS_PER_HOUR;
+	
+	*minute = *second / SECONDS_PER_MINUTE;
+	*second %= SECONDS_PER_MINUTE;
+	
+	*year = 1970;
+	while (1) {
+		int days_in_year = is_vis_year(*year) ? 366 : 365;
+		if (days < days_in_year) break;
+		days -= days_in_year;
+		(*year)++;
+	}
+	
+	int vis = is_vis_year(*year);
+	*month = 0;
+	while (days >= days_arr[vis][*month]){
+		days -= days_arr[vis][*month];
+		(*month++);
+	}
+	*day = days + 1;
+	(*month)++;
 }
