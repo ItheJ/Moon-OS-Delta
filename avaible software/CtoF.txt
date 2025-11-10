@@ -1,0 +1,17 @@
+touch CtoF.mdxt
+wr CtoF.mdxt 1*** *C to *F ***
+add CtoF.mdxt 3
+add CtoF.mdxt 2
+add CtoF.mdxt 0*
+add CtoF.mdxt 09
+add CtoF.mdxt 7
+add CtoF.mdxt 0/
+add CtoF.mdxt 05
+add CtoF.mdxt 7
+add CtoF.mdxt 0+
+add CtoF.mdxt 03
+add CtoF.mdxt 02
+add CtoF.mdxt 7
+add CtoF.mdxt 1 *Fahrenheit.
+add CtoF.mdxt 3
+add CtoF.mdxt 4
