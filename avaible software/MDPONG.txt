@@ -1,0 +1,47 @@
+touch mdpong.mdxt
+wr mdpong.mdxt 1Moon Delta PONG!
+add mdpong.mdxt 3
+add mdpong.mdxt 1Be quick! Type 'pong'
+add mdpong.mdxt 3
+
+add mdpong.mdxt 6
+add mdpong.mdxt 15
+add mdpong.mdxt 16 0
+add mdpong.mdxt 6
+add mdpong.mdxt 2
+
+add mdpong.mdxt 18 pong
+add mdpong.mdxt 12 A127
+
+add mdpong.mdxt 6
+add mdpong.mdxt 1Wrong word! See you next time!
+add mdpong.mdxt 3
+add mdpong.mdxt 4
+
+add mdpong.mdxt 15
+add mdpong.mdxt 0-
+add mdpong.mdxt 17 0
+add mdpong.mdxt 7
+
+add mdpong.mdxt 0<
+add mdpong.mdxt 03
+add mdpong.mdxt 9
+
+add mdpong.mdxt 13 A212
+
+add mdpong.mdxt 6
+add mdpong.mdxt 1GOOD JOB!
+add mdpong.mdxt 3
+add mdpong.mdxt 6
+add mdpong.mdxt 02
+add mdpong.mdxt 00
+add mdpong.mdxt 00
+add mdpong.mdxt 00
+add mdpong.mdxt 14
+add mdpong.mdxt 6
+add mdpong.mdxt 11
+
+add mdpong.mdxt 6
+add mdpong.mdxt 1Too slow! Game over!
+add mdpong.mdxt 3
+add mdpong.mdxt 4
