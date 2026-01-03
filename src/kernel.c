@@ -1,17 +1,11 @@
-// Moon OS Delta 1.0
+// Moon OS Delta 1.12
 // Author - 'Zondrobonie' Ivan, put copyright here ;)
 
-//put multiboot to first file's bytes
-__attribute__((section(".multiboot"), used))
-const unsigned int multiboot_header[4] = {
-	0x1BADB002,
-	0x00000000,
-	0xE4524FFE,
-	0x00000000
-};
+//no more multiboot in C file :(
+
 //set standart cursor position
-int cur_x = 0;
-int cur_y = 0;
+static int cur_x = 0;
+static int cur_y = 0;
 
 //define for keyboard port
 #define KEYBOARD_PORT 0x60
@@ -67,6 +61,7 @@ int cur_y = 0;
 #define OP_RAW_TIME 0x0F
 #define OP_SET_REG 0x10
 #define OP_LOAD_REG 0x11
+#define OP_STR_EQ 0x12
 
 // F symbols ☻
 #define F1 0x3B
@@ -217,6 +212,14 @@ struct tss_entry {
 	unsigned short iomap_base;
 } __attribute__((packed));
 
+typedef struct{
+	unsigned int ds;
+	unsigned int edi, esi, ebp, esp, ebx, edx, ecx, eax;
+	unsigned int int_no, err_code;
+	unsigned int eip, cs, eflags;
+	unsigned int user_esp, user_ss;
+} Registers;
+
 typedef enum {
 	DEV_TYPE_NONE,
 	DEV_TYPE_IDE,
@@ -241,6 +244,17 @@ typedef struct {
 	unsigned char registers[8][16];
 	unsigned char flags;
 } Executor;
+
+// struct for text editor "MD READ & WRITE" (mdrw)
+
+typedef struct {
+	char lines[51][80];
+	unsigned int total_lines;
+	int cur_xe, cur_ye;
+	int scroll_offset;
+	char filename[MAX_FILENAME_LEN];
+	unsigned short modified;
+} Mdrw;
 
 //init vars
 
@@ -284,10 +298,14 @@ static unsigned int buf_id = 0;
 static int input_mode = 0;
 static int hlt_input_mode = 0;
 static int input_exec_ready = 0;
+static int mdrw_mode = 0;
+static int mdrw_run = 0;
 
 static int in_format = 0;
 
 static int debug_mode = 0;
+
+static int mdrw_need_draw = 1;
 
 // for lddsk correctly work
 static struct DirEntry dir_entries[MAX_FILES] __attribute__((aligned(4)));
@@ -304,6 +322,9 @@ static inline unsigned char inb(unsigned short port);
 
 static inline void outw(unsigned short port, unsigned short value);
 static inline unsigned short inw(unsigned short port);
+
+void PANIC(const char* msg, Registers* reg);
+extern int df_handler_entry(void);
 
 void pic_remap();
 
@@ -333,7 +354,7 @@ char strchr(const char* str, char c);
 int isspace(char symbol);
 int isnumber(char symbol);
 //function prototypes for translate x to y
-void digrostr(unsigned number, char * buffer);
+void digtostr(unsigned number, char * buffer);
 void lglg_to_str(unsigned long long number, char * buffer);
 int strtodig(const char *str, int *result);
 int strtoudig(const char *str, unsigned int *result);
@@ -368,7 +389,7 @@ void mdfs_ini();
 //function prototypes for work with files in RAM
 int file_cr(const char* filename);
 int file_wr(const char* filename, const char * data, unsigned int size);
-int file_read(const char *filename, char * buffer, unsigned int buffer_size);
+int file_read(const char *filename, char * buffer, unsigned int buffer_size, unsigned int offset);
 int file_del(const char *filename);
 int file_rnm(const char* old_filename, const char* new_filename);
 int files_er();
@@ -418,9 +439,20 @@ void ide_reset();
 void paging_ini();
 
 // func for MDcode and command "exec"
-void interpret_program(unsigned char *program);
+void interpret_program(unsigned char* filename);
 
 void hltmode();
+
+//funcs for MDRW
+void Mdrw_exec();
+void draw_ed(Mdrw *text_ed);
+void mdrw_handler(Mdrw *editor);
+void mdrw_load_file(const char* filename, Mdrw *editor);
+void mdrw_save_file(const char* filename, Mdrw *editor);
+void mdrw_input_dialog(char *new_filename, Mdrw *editor, const char *text);
+
+void push_hchar(unsigned char ch);
+void push_h32(unsigned int num);
 
 void krnl_run (void){
 	cls();
@@ -439,7 +471,7 @@ void krnl_run (void){
 	push_text("MoonOS:>> ");
 
 	pic_remap();
-	while (1);
+	while (1) asm volatile("hlt");
 	
 }
 
@@ -485,8 +517,9 @@ void set_idt_ent(unsigned char num, unsigned int handler){
 	idt[num].offset_high = (handler >> 16) & 0xFFFF;
 }
 void idt_ini() {
-	set_idt_ent(0x21, (unsigned int)keyboard_handler_entry);
+	set_idt_ent(0x08, (unsigned int)df_handler_entry); //Double fault
 	
+	set_idt_ent(0x21, (unsigned int)keyboard_handler_entry); // keyboard
 	
 	struct {
 		unsigned short limit;
@@ -561,6 +594,7 @@ void paging_ini(){
 	cr0 |= 0x80000000;
 	asm volatile("mov %0, %%cr0" : : "r"(cr0));
 }
+
 
 void cur_move(){
 	unsigned short pos = cur_y * 80 + cur_x;
@@ -680,13 +714,13 @@ void check_comm(const char* comm){
 	if (streq(comm, "help") == 0){
 		if (args && *args){
 			if (streq(args, "--standart") == 0) {
-				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system\n  rest - reset the system\n  abt - info the system and authors / credits\n  mdver - version the system and devices\n  time <--hms> <--dmy> <--unixt> - print time or date");
+				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system\n  rest - reset the system\n  abt - info the system and authors / credits\n  mdver - version the system and devices\n  time <--hms> <--dmy> <--unixt> - print time or date\n  mdrw - open MD READ&WRITE");
 			}
 			else if (streq(args, "--filew") == 0) {
-				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file\n  erase - delete all files\n  ls - list all files,\n  add <filename> <text> - add text in file\n  rnm <old filename> <new filename> - rename file");
+				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file\n  erase <filename> - erase all data in file\n  ls - list all files,\n  add <filename> <text> - add text in file\n  rnm <old filename> <new filename> - rename file\n  copyf <filename1> <filename2> - copy data to <filename2>\n  movf <filename1> <filename2> - move data to <filename2>");
 			}
 			else if (streq(args, "--advanced") == 0){
-				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal\n  lddsk <dev> - load data from <dev> to RAM\n  svdsk - save data from RAM\n  lsdevs - list of available device\n  formt <dev> - format <dev> and set MDFS on <dev>\n  exec <filename> - execute file in MDcode\n  comdummy <pointer>=<command> - create a custom command\n  lscomdum - list of created comdummy\n  chcomdum <pointer>=<command> - change command in comdummy\n  chdbg - on/off debug mode\n  timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date\n ");
+				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal\n  lddsk <dev> - load data from <dev> to RAM\n  svdsk - save data from RAM\n  lsdevs - list of available device\n  formt <dev> - format <dev> and set MDFS on <dev>\n  exec <filename> - execute file in MDcode\n  comdummy <pointer>=<command> - create a custom command\n  lscomdum - list of created comdummy\n  chcomdum <pointer>=<command> - change command in comdummy\n  chdbg - on/off debug mode\n  timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date");
 			}
 		} else {
 			push_text("\nFor more commands print help <--standart> or help <--filew> or help <--advanced>");
@@ -721,10 +755,10 @@ void check_comm(const char* comm){
 		char vde[6];
 		char hde[6];
 		
-		push_text("\nMoon OS Delta\nversion - 1.1 November update Vol.1, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta \n\n");
+		push_text("\nMoon OS Delta\nversion - 1.12 November/December update Vol.2, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta \n\n");
 		
 		push_text("Available memory - ");
-		digrostr(get_memory_size(), mem);
+		digtostr(get_memory_size(), mem);
 		push_text(mem);
 		push_text(" KB\n");
 		
@@ -734,8 +768,8 @@ void check_comm(const char* comm){
 		
 		
 		push_text("\nScreen size: ");
-		digrostr(get_vde(), vde);
-		digrostr(get_hde(), hde);
+		digtostr(get_vde(), vde);
+		digtostr(get_hde(), hde);
 		push_text(vde);
 		push_char('x');
 		push_text(hde);
@@ -804,13 +838,15 @@ void check_comm(const char* comm){
 			if (file_wr(filename_start, text_start, strlen(text_start)) == 0){
 				file_add_data(filename_start, end_char, strlen(end_char));
 				file_add_data(filename_start, " \n", strlen(" \n"));
+				
+				push_text("\nData wrote in file.");
 			}
 		}
     }
 	else if (streq(comm, "rd") == 0) {
 		if (args && *args) {
 			char buffer[MAX_FILE_SIZE + 1];
-			unsigned int bytes_read = file_read(args, buffer, MAX_FILE_SIZE);
+			int bytes_read = file_read(args, buffer, MAX_FILE_SIZE, 0);
 			
 			if (bytes_read >= 0){
 				buffer[bytes_read] = '\0';
@@ -835,7 +871,13 @@ void check_comm(const char* comm){
 		}
 	}
 	else if (streq(comm, "erase") == 0) {
-		files_er();
+		if (args && *args) {
+			files_er(args);
+		}
+		else {
+			push_text("\nUsage: erase <filename>");
+		}
+		
 	}
 	else if (streq(comm, "ls") == 0) {
 		files_list();
@@ -876,8 +918,8 @@ void check_comm(const char* comm){
 		
 		push_text("\nBeep at ");
 		
-		digrostr(freq, frq);
-		digrostr(duration, dur);
+		digtostr(freq, frq);
+		digtostr(duration, dur);
 		
 		push_text(frq);
 		push_text("Hz for ");
@@ -952,7 +994,7 @@ void check_comm(const char* comm){
 			file_add_data(filename_start, end_char, strlen(end_char));
 			file_add_data(filename_start, " \n", strlen(" \n"));
 			
-			push_text("\nData added in file.\n");
+			push_text("\nData added in file.");
 		}
     }
 	else if (streq(comm, "exec") == 0){
@@ -1076,7 +1118,7 @@ void check_comm(const char* comm){
 					if (!found){
 						if (comdummy_count < MAX_DUMMY) {
 							//list of reserved names (command names)
-							if ( comdummies[comdummy_count].name == "help" || comdummies[comdummy_count].name == "cls" || comdummies[comdummy_count].name == "echo" || comdummies[comdummy_count].name == "logoff" || comdummies[comdummy_count].name == "rest" || comdummies[comdummy_count].name == "abt" || comdummies[comdummy_count].name == "mdver" || comdummies[comdummy_count].name == "time" || comdummies[comdummy_count].name == "touch" || comdummies[comdummy_count].name == "wr" || comdummies[comdummy_count].name == "rd" || comdummies[comdummy_count].name == "del" || comdummies[comdummy_count].name == "erase" || comdummies[comdummy_count].name == "ls" || comdummies[comdummy_count].name == "add" || comdummies[comdummy_count].name == "rnm" || comdummies[comdummy_count].name == "beep" || comdummies[comdummy_count].name == "lddsk" || comdummies[comdummy_count].name == "svdsk" || comdummies[comdummy_count].name == "lsdevs" || comdummies[comdummy_count].name == "formt" || comdummies[comdummy_count].name == "exec" || comdummies[comdummy_count].name == "comdummy" || comdummies[comdummy_count].name == "lscomdum" || comdummies[comdummy_count].name == "chcomdum" || comdummies[comdummy_count].name == "hltmode" || comdummies[comdummy_count].name == "chdbg" || comdummies[comdummy_count].name == "timeset"){
+							if (streq(comdummies[comdummy_count].name, "help") == 0 || streq(comdummies[comdummy_count].name, "cls") == 0 || streq(comdummies[comdummy_count].name, "echo") == 0 || streq(comdummies[comdummy_count].name, "logoff") == 0 || streq(comdummies[comdummy_count].name, "rest") == 0 || streq(comdummies[comdummy_count].name, "abt") == 0 || streq(comdummies[comdummy_count].name, "mdver") == 0 || streq(comdummies[comdummy_count].name, "time") == 0 || streq(comdummies[comdummy_count].name, "touch") == 0 || streq(comdummies[comdummy_count].name, "wr") == 0 || streq(comdummies[comdummy_count].name, "rd") == 0 || streq(comdummies[comdummy_count].name, "del") == 0 || streq(comdummies[comdummy_count].name, "erase") == 0 || streq(comdummies[comdummy_count].name, "ls") == 0 || streq(comdummies[comdummy_count].name, "add") == 0 || streq(comdummies[comdummy_count].name, "rnm") == 0 || streq(comdummies[comdummy_count].name, "beep") == 0 || streq(comdummies[comdummy_count].name, "lddsk") == 0 || streq(comdummies[comdummy_count].name, "svdsk") == 0 || streq(comdummies[comdummy_count].name, "lsdevs") == 0 || streq(comdummies[comdummy_count].name, "formt") == 0 || streq(comdummies[comdummy_count].name, "exec") == 0 || streq(comdummies[comdummy_count].name, "comdummy") == 0 || streq(comdummies[comdummy_count].name, "lscomdum") == 0 ||streq(comdummies[comdummy_count].name, "chcomdum") == 0 || streq(comdummies[comdummy_count].name, "hltmode") == 0 ||streq(comdummies[comdummy_count].name, "chdbg") == 0 || streq(comdummies[comdummy_count].name, "timeset") == 0 || streq(comdummies[comdummy_count].name, "mdrw") == 0 || streq(comdummies[comdummy_count].name, "copyf") == 0 || streq(comdummies[comdummy_count].name, "movf") == 0){
 								push_text("\nError: Used reserved word in name!");
 								return;
 							}
@@ -1151,7 +1193,7 @@ void check_comm(const char* comm){
 	else if (streq(comm, "chdbg") == 0){
 		debug_mode = (!debug_mode);
 		char db[2];
-		digrostr(debug_mode, db);
+		digtostr(debug_mode, db);
 		
 		push_text("\nChanged [DEBUG MODE] to '");
 		push_text(db);
@@ -1245,6 +1287,127 @@ void check_comm(const char* comm){
 			push_text("Usage: timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)>");
 		}
 	}
+	else if (streq(comm, "mdrw") == 0){
+		Mdrw_exec();
+	}
+	else if (streq(comm, "copyf") == 0){
+		char* args = comm + 6;
+        
+        char* filename_start = args;
+        char* fn = "";
+        
+        while (*args == ' ') args++;
+        filename_start = args;
+		
+		char end_char[2];
+		
+		end_char[0] = filename_start[strlen(filename_start) - 1];
+		end_char[1] = '\0';
+		
+		filename_start[strlen(filename_start) - 1] = '\0';
+        
+        while (*args != '\0' && *args != ' ') args++;
+        
+        if (*args == '\0') {
+            push_text("\nUsage: copyf <filename1> <filename2>");
+        }
+        else{
+			*args = '\0';
+			args++;
+			
+			fn = args;
+			char filename2[MAX_FILENAME_LEN];
+			int i = 0;
+			
+			for (i; i < strlen(fn); i++){
+				filename2[i] = fn[i];
+			}
+			
+			filename2[i++] = end_char[0];
+			filename2[i++] = end_char[1];
+			
+			char buffer[MAX_FILE_SIZE + 1];
+			int bytes_read = file_read(filename_start, buffer, MAX_FILE_SIZE, 0);
+			
+			char ech[2];
+			
+			ech[0] = buffer[MAX_FILE_SIZE];
+			ech[1] = '\0';
+			
+			if( bytes_read >= 0){
+				if (file_wr(filename2, buffer, strlen(buffer)) == 0){
+					file_add_data(filename2, ech, strlen(ech));
+					file_add_data(filename2, " \n", strlen(" \n"));
+					
+					push_text("\nData copied and moved to other file.");
+				}
+			}
+			else{		
+				push_text("\nError: file not found!");
+			}
+			
+		}
+	}
+	else if (streq(comm, "movf") == 0){
+		char* args = comm + 5;
+        
+        char* filename_start = args;
+        char* fn = "";
+        
+        while (*args == ' ') args++;
+        filename_start = args;
+		
+		char end_char[2];
+		
+		end_char[0] = filename_start[strlen(filename_start) - 1];
+		end_char[1] = '\0';
+		
+		filename_start[strlen(filename_start) - 1] = '\0';
+        
+        while (*args != '\0' && *args != ' ') args++;
+        
+        if (*args == '\0') {
+            push_text("\nUsage: movf <filename1> <filename2>");
+        }
+        else{
+			*args = '\0';
+			args++;
+			
+			fn = args;
+			char filename2[MAX_FILENAME_LEN];
+			int i = 0;
+			
+			for (i; i < strlen(fn); i++){
+				filename2[i] = fn[i];
+			}
+			
+			filename2[i++] = end_char[0];
+			filename2[i++] = end_char[1];
+			
+			char buffer[MAX_FILE_SIZE + 1];
+			int bytes_read = file_read(filename_start, buffer, MAX_FILE_SIZE, 0);
+			
+			char ech[2];
+			
+			ech[0] = buffer[MAX_FILE_SIZE];
+			ech[1] = '\0';
+			
+			if( bytes_read >= 0){
+				if (file_wr(filename2, buffer, strlen(buffer)) == 0){
+					file_add_data(filename2, ech, strlen(ech));
+					file_add_data(filename2, " \n", strlen(" \n"));
+					
+					files_er(filename_start);
+					
+					push_text("\nData moved to other file.");
+				}
+			}
+			else{		
+				push_text("\nError: file not found!");
+			}
+			
+		}
+	}
 	else if (streq(comm, "PASS COMMAND") == 0){
 		push_char('\0');
 	}
@@ -1266,6 +1429,7 @@ void check_comm(const char* comm){
 
 void keyboard_handler(){
 	asm volatile("cli");
+	
 	unsigned char scancode = inb(KEYBOARD_PORT);
 	
 	unsigned char relflag = scancode & 0x80;
@@ -1365,7 +1529,7 @@ void keyboard_handler(){
 				}
 				break;
 				
-			case F1:
+			case F11:
 				if (!input_mode){
 					input_buf[buf_id] = '\0';
 					
@@ -1379,7 +1543,7 @@ void keyboard_handler(){
 					
 				}
 				break;
-			case F2:
+			case F12:
 				if (!input_mode){
 					input_buf[buf_id] = '\0';
 					
@@ -1561,7 +1725,7 @@ unsigned int get_unix_t(){
 	return minutes * 60 + t.second;
 }
 
-void digrostr(unsigned int number, char * buffer) {
+void digtostr(unsigned int number, char * buffer) {
 	if (number == 0) {
 		buffer[0] = '0';
 		buffer[1] = '\0';
@@ -1603,9 +1767,9 @@ void push_time(){
 	
 	push_text("Time: ");
 	
-	digrostr(t.hour, hour_str);
-	digrostr(t.minute, min_str);
-	digrostr(t.second, sec_str);
+	digtostr(t.hour, hour_str);
+	digtostr(t.minute, min_str);
+	digtostr(t.second, sec_str);
 	
 	push_text(hour_str);
 	push_char(':');
@@ -1621,9 +1785,9 @@ void push_date(){
 	
 	push_text("Date: ");
 	
-	digrostr(t.day, day_str);
-	digrostr(t.month, month_str);
-	digrostr(t.year, year_str);
+	digtostr(t.day, day_str);
+	digtostr(t.month, month_str);
+	digtostr(t.year, year_str);
 	
 	push_text(day_str);
 	push_char('|');
@@ -1639,7 +1803,7 @@ void push_unix_t(){
 	unsigned int unix_t = get_unix_t();
 	
 	char unix_str[16];
-	digrostr(unix_t, unix_str);
+	digtostr(unix_t, unix_str);
 	
 	push_text("Unix time: ");
 	push_text(unix_str);
@@ -1707,7 +1871,6 @@ int file_wr(const char* filename, const char * data, unsigned int size){
             
             copymemory(mdfs.files[i].data, data, size);
             mdfs.files[i].size = size;
-			push_text("\nData wrote in file.");
             return 0;
         }
     }
@@ -1716,11 +1879,12 @@ int file_wr(const char* filename, const char * data, unsigned int size){
     return -1;
 }
 
-int file_read(const char *filename, char * buffer, unsigned int buffer_size) {
+int file_read(const char *filename, char * buffer, unsigned int buffer_size, unsigned int offset) {
 	for (int i = 0; i < MAX_FILES; i++){
 		if (mdfs.files[i].used && streq(mdfs.files[i].name, filename) == 0) {
 			unsigned int to_copy = (buffer_size < mdfs.files[i].size) ? buffer_size : mdfs.files[i].size;
-			copymemory(buffer, mdfs.files[i].data, to_copy);
+			if (offset >= mdfs.files[i].size) offset = mdfs.files[i].size - 1;
+			copymemory(buffer, mdfs.files[i].data + offset, to_copy);
 			return to_copy;
 		}
 	}
@@ -1744,19 +1908,19 @@ int file_del(const char *filename){
 	return -1;
 }
 
-int files_er(){
-	
-	for( int i = 0; i < MAX_FILES;  i++){
-		if ( mdfs.files[i].used){
-			setmemory(&mdfs.files[i], 0, sizeof(FileEntry));
+int files_er(const char *filename){
+	for(int i = 0; i < MAX_FILES; i++){
+		if (mdfs.files[i].used && streq(mdfs.files[i].name, filename) == 0){
+			setmemory(&mdfs.files[i].data, 0, sizeof(mdfs.files[i].data));
+			mdfs.files[i].size = 0;
+			push_text("\nFile was erased.");
+			
+			return 0;
 		}
 	}
+	push_text("Error: file not found!");
 	
-	push_text("\nAll files was erased.");
-	
-	mdfs.file_count = 0;
-	
-	return 0;
+	return -1;
 }
 
 void files_list() {
@@ -1772,7 +1936,7 @@ void files_list() {
 			push_text(mdfs.files[i].name);
 			
 			char size_str[16];
-			digrostr(mdfs.files[i].size, size_str);
+			digtostr(mdfs.files[i].size, size_str);
 			
 			push_text(" : ");
 			push_text(size_str);
@@ -1955,7 +2119,9 @@ int power(int x, int y){
 }
 
 void slp(unsigned int ms){
-	for (volatile unsigned int i = 0; i < ms * 5000; i++);
+	for (volatile unsigned int i = 0; i < ms * 1000; i++){
+		asm volatile("pause");
+	}
 }
 
 char strchr(const char* str, char c) {
@@ -2510,7 +2676,7 @@ void interpret_program(unsigned char *program){
 		if (debug_mode){
 			
 			char address[10];
-			digrostr((state.program_c - 1), address);
+			digtostr((state.program_c - 1), address);
 			
 			push_text("[DEBUG STACK] - ['");
 			push_text(state.work_stack);
@@ -2897,7 +3063,6 @@ void interpret_program(unsigned char *program){
 						address = address * 10 + (state.program[state.program_c] - '0');
 						state.program_c++;
 					}
-					
 					if (state.program_c > MAX_FILE_SIZE){
 						state.program_c = 0;
 					}
@@ -3006,7 +3171,6 @@ void interpret_program(unsigned char *program){
 				}
 				
 				slp(num1);
-				push_text(num1_str);
 				break;
 				
 				
@@ -3015,7 +3179,7 @@ void interpret_program(unsigned char *program){
 				unsigned long unixt = get_unix_t();
 				
 				char time_str[16];
-				digrostr(unixt, time_str);
+				digtostr(unixt, time_str);
 				
 				for (int i = 0; time_str[i] != '\0'; i++){
 					state.work_stack[state.stack_pointer++] = time_str[i];
@@ -3046,7 +3210,6 @@ void interpret_program(unsigned char *program){
 				state.program_c++;
 				int reg_num = state.program[state.program_c] - '0';
 				if (reg_num >= 0 && reg_num <= 7){
-					state.stack_pointer = 0;
 					for (int i = 0; state.registers[reg_num][i] != '\0'; i++){
 						state.work_stack[state.stack_pointer++] = state.registers[reg_num][i];
 					}
@@ -3056,6 +3219,48 @@ void interpret_program(unsigned char *program){
 					input_mode = 0;
 					return;
 				}
+				break;
+			}
+			case OP_STR_EQ: {
+				state.program_c++;
+				
+				unsigned int il1 = 0;
+				unsigned int il2 = 0;
+				
+				unsigned char str1[256];
+				unsigned char str2[256];
+				
+				unsigned int equal;
+				
+				unsigned int sp = 0;
+				while (state.program[state.program_c] != '\0' && state.program[state.program_c] != '\n' && state.program[state.program_c] != ' '){
+					str1[il1] = state.program[state.program_c++];
+					il1++;
+				}
+				str1[il1] = '\0';
+				while (state.work_stack[sp] != '\0' && state.work_stack[sp] != '\n'){
+					str2[il2] = state.work_stack[sp];
+					state.work_stack[sp++] = '\0';
+					il2++;
+				}
+				str2[il2] = '\0';
+				state.work_stack[sp] = '\0';
+				if (il1 == il2){
+					if (streq(str1, str2) == 0){
+						equal = 1;
+					}
+					else {
+						equal = 0;
+					}
+				}
+				else {
+					equal = 0;
+				}
+				state.stack_pointer = 0;
+				
+				state.work_stack[state.stack_pointer++] = equal ? '1' : '0';
+				
+				state.program_c++;
 				break;
 			}
 			default:
@@ -3175,4 +3380,463 @@ void unixt_to_date(unsigned long unixt, int *second, int *minute, int *hour, int
 	}
 	*day = days + 1;
 	(*month)++;
+}
+
+void mdrw_handler(Mdrw *editor){
+	asm("cli");
+	
+	unsigned char scancode = inb(KEYBOARD_PORT);
+	
+	unsigned char relflag = scancode & 0x80;
+	unsigned char key_code = scancode & 0x7F;
+	
+	if (!relflag) {
+		switch(key_code) {
+			case 0x2A:
+				kbs.lshift = 1;
+				break;
+			case 0x36:
+				kbs.rshift = 1;
+				break;
+			case 0x1D:
+				kbs.lctrl = 1;
+				break;
+			case 0x38:
+				kbs.lalt = 1;
+				break;
+			case 0x3A:
+				kbs.capslc = !kbs.capslc;
+				break;
+		}
+	}
+	else {
+		switch (key_code) {
+			case 0x2A:
+				kbs.lshift = 0;
+				break;
+			case 0x36:
+				kbs.rshift = 0;
+				break;
+			case 0x1D:
+				kbs.lctrl = 0;
+				break;
+			case 0x38:
+				kbs.lalt = 0;
+				break;
+		}
+	}
+	
+	if (!relflag){
+		unsigned char sh_active = kbs.lshift || kbs.rshift;
+		unsigned char use_sh_tabl = (sh_active || kbs.capslc);
+		
+		switch(scancode) {
+			case 0x48: { //Key up
+				if (editor->cur_ye > 0) editor->cur_ye--;
+				mdrw_need_draw = 1;
+				break;
+			}
+			case 0x50: { //Key down
+				if (editor->cur_ye < editor->total_lines - 1) editor->cur_ye++;
+				mdrw_need_draw = 1;
+				break;
+			}
+			case 0x4B: { //Key left
+				if (editor->cur_xe > 0) editor->cur_xe--;
+				mdrw_need_draw = 1;
+				break;
+			}
+			case 0x4D: { //Key right
+				if (editor->cur_xe < 51){
+					if (editor->lines[editor->cur_ye][editor->cur_xe] == '\0'){
+						editor->lines[editor->cur_ye][editor->cur_xe] = ' ';
+					}
+					editor->cur_xe++;
+				}
+				mdrw_need_draw = 1;
+				break;
+			}
+			case 0x47: { //home
+				editor->cur_xe = 0;
+				mdrw_need_draw = 1;
+				break;
+			}
+			case 0x4F: { //end (key)
+				editor->cur_xe = strlen(editor->lines[editor->cur_ye]);
+				mdrw_need_draw = 1;
+				break;
+			}
+			case F1: {
+				mdrw_save_file(editor->filename, editor);
+				mdrw_need_draw = 1;
+				break;
+			}
+			case F2: {
+				
+				char filename[MAX_FILENAME_LEN];
+				mdrw_input_dialog(filename, editor, "\nFilename: ");
+				
+				strcopy(editor->filename, filename);
+				
+				editor->cur_xe = 0;
+				editor->cur_ye = 0;
+				editor->scroll_offset = 0;
+				editor->modified = 0;
+
+				setmemory(editor->lines, 0, sizeof(editor->lines));
+
+				editor->total_lines = 0;
+	
+				mdrw_load_file(editor->filename, editor);
+				mdrw_need_draw = 1;
+				break;
+			}
+			case F5: {
+				mdrw_run = 0;
+				cls();
+				break;
+			}
+			case 0x1C: {
+				if (editor->total_lines < 79) {
+					for (int i = editor->total_lines; i > editor->cur_ye + 1; i--) {
+						strcopy(editor->lines[i], editor->lines[i-1]);
+					}
+					char* current_line = editor->lines[editor->cur_ye];
+					int split_pos = editor->cur_xe;
+					strcopy(editor->lines[editor->cur_ye + 1], current_line + split_pos);
+					current_line[split_pos] = '\0';
+       
+					editor->cur_ye++;
+					editor->cur_xe = 0;
+					editor->total_lines++;
+					editor->modified = 1;
+				}
+				mdrw_need_draw = 1;
+				break;
+			}
+			case 0x0E: {
+				if (editor->cur_xe > 0) {
+					int line_len = strlen(editor->lines[editor->cur_ye]);
+					for (int i = editor->cur_xe - 1; i < line_len; i++) {
+						editor->lines[editor->cur_ye][i] = editor->lines[editor->cur_ye][i+1];
+					}
+       
+					editor->cur_xe--;
+					editor->modified = 1;
+				}
+				mdrw_need_draw = 1;
+				break;
+			}
+			default: {
+				char base_ascii = (key_code < 128) ? scancodes[key_code] : 0;
+				int is_letter = (base_ascii >= 'a' && base_ascii <= 'z');
+    
+				char ascii = 0;
+    
+				if (is_letter) {
+					if (sh_active != kbs.capslc) {
+						ascii = scancodes_sh[key_code];
+					} else {
+						ascii = scancodes[key_code];
+					}
+				} else {
+					if (sh_active) {
+						ascii = scancodes_sh[key_code];
+					} else {
+						ascii = scancodes[key_code];
+					}
+				}
+				if (ascii != 0 && ascii >= 32 && ascii <= 126) {
+					int line_len = strlen(editor->lines[editor->cur_ye]);
+        
+					if (line_len < 79) {
+						for (int i = line_len; i > editor->cur_xe; i--) {
+							editor->lines[editor->cur_ye][i] = editor->lines[editor->cur_ye][i-1];
+						}
+            
+						editor->lines[editor->cur_ye][editor->cur_xe] = ascii;
+						editor->lines[editor->cur_ye][line_len + 1] = '\0';
+						editor->cur_xe++;
+						editor->modified = 1;
+					}
+				}
+				mdrw_need_draw = 1;
+				break;
+			}
+		}
+	}
+	
+	outb(0x20, 0x20);
+	outb(0xA0, 0x20);
+	asm volatile("sti");
+}
+
+void Mdrw_exec(){
+	Mdrw *text_ed;
+	
+	strcopy(text_ed->filename, "unnamed");
+	
+	text_ed->cur_xe = 0;
+	text_ed->cur_ye = 0;
+	text_ed->scroll_offset = 0;
+	text_ed->modified = 0;
+
+	setmemory(text_ed->lines, 0, sizeof(text_ed->lines));
+
+	text_ed->total_lines = 0;
+	
+	mdrw_load_file(text_ed-> filename, text_ed);
+	mdrw_run = 1;
+
+	while (mdrw_run) {
+		
+		if (mdrw_need_draw) {
+			cls();
+    
+			draw_ed(text_ed);
+			mdrw_need_draw = 0;
+		}
+		mdrw_handler(text_ed);
+		
+		asm("hlt");
+	}
+}
+
+void draw_ed(Mdrw *text_ed){
+	
+	cur_x = 0; cur_y = 0;
+	cur_move();
+	push_text("MD READ & WRITE -> [");
+	push_text(text_ed->filename);
+	push_text("]");
+	
+	while (text_ed->cur_ye >= text_ed->scroll_offset + 20){
+		text_ed->scroll_offset++;
+	}
+	while (text_ed->cur_ye < text_ed->scroll_offset) {
+		text_ed->scroll_offset--;
+	}
+	
+	if (text_ed->scroll_offset > text_ed->total_lines - 20){
+		text_ed->scroll_offset = text_ed->total_lines - 20;
+	}
+	if (text_ed->scroll_offset < 0){
+		text_ed->scroll_offset = 0;
+	}
+	
+	if (text_ed->modified) push_text(" *");
+    
+	for (int i = 0; i < 20 && (i + text_ed->scroll_offset) < text_ed->total_lines; i++) {
+		
+		cur_x = 0;
+		cur_y = i + 1;
+		cur_move();
+		
+		if ((i + text_ed->scroll_offset) == text_ed->cur_ye) {
+			push_text(">");
+		} else {
+			push_text(" ");
+		}
+				
+		push_text(text_ed->lines[i + text_ed->scroll_offset]);
+	}
+    
+	cur_x = 0; 
+	cur_y = 21;
+	cur_move();
+	push_text("F1:Save  F2:Open  F5:Quit");
+
+	cur_x = 0; cur_y = 22;
+	cur_move();
+		
+	char x[3];
+	char y[3];
+	char t[3];
+		
+	digtostr(text_ed->cur_ye + 1, y);
+	digtostr(text_ed->cur_xe + 1, x);
+	digtostr(text_ed->total_lines, t);
+		
+	push_text("Line:");
+	push_text(y);
+	push_text(" ; Col:");
+	push_text(x);
+	push_text(" ; Total:");
+	push_text(t);
+}
+
+void mdrw_load_file(const char* filename, Mdrw *editor){
+	for (int i = 0; i < MAX_FILES; i++) {
+		if (mdfs.files[i].used && streq(mdfs.files[i].name, editor->filename) == 0) {
+			char file_buffer[4080];
+			int file_size = file_read(editor->filename, file_buffer, 4080, 0);
+        
+			if (file_size > 0) {
+				editor->total_lines = 0;
+				int current_pos = 0;
+				int line_start = 0;
+				
+				while (current_pos < file_size && editor->total_lines < 52) {
+					if (file_buffer[current_pos] == '\n' || current_pos == file_size - 1) {
+						int line_length = current_pos - line_start;
+						if (line_length > 80) line_length = 80;
+
+						copymemory(editor->lines[editor->total_lines], file_buffer + line_start, line_length);
+						editor->lines[editor->total_lines][line_length] = '\0';
+                    
+						editor->total_lines++;
+						line_start = current_pos + 1;
+					}
+					current_pos++;
+				}
+				if (editor->total_lines == 0) {
+					editor->lines[0][0] = '\0';
+					editor->total_lines = 1;
+				}
+			}
+			break;
+		}
+	}
+	
+	if (editor->total_lines == 0) {
+		file_cr(editor->filename);
+		editor->lines[0][0] = '\0';
+		editor->total_lines = 1;
+	}
+}
+
+void mdrw_save_file(const char* filename, Mdrw *editor){
+	char file_buffer[4080];
+    int buffer_pos = 0;
+	
+	char end_char[2];
+	
+	end_char[0] = file_buffer[strlen(file_buffer) - 1];
+	end_char[1] = '\0';
+    
+    for (int i = 0; i < editor->total_lines; i++) {
+        int line_len = strlen(editor->lines[i]);
+		
+        for (int j = 0; j < line_len; j++) {
+            file_buffer[buffer_pos++] = editor->lines[i][j];
+        }
+		
+        if (i < editor->total_lines - 1) {
+            file_buffer[buffer_pos++] = '\n';
+        }
+    }
+    file_buffer[buffer_pos] = '\0';
+
+    file_wr(filename, file_buffer, buffer_pos);
+	file_add_data(filename, end_char, strlen(end_char));
+	
+	push_text("\nData wrote in file.");
+    editor->modified = 0;
+}
+
+void mdrw_input_dialog(char *new_filename, Mdrw *editor, const char *text){
+	INPUT:
+		input_mode = 1; //kostyl for easily work ;)
+		input_exec_ready = 0;
+		buf_id = 0;
+		int i = 0;
+				
+		char filename[MAX_FILENAME_LEN];
+		input_buf[0] = '\0';
+				
+		setmemory(input_buf, 0, sizeof(input_buf));
+		setmemory(input_buf_exec, 0, sizeof(input_buf));
+				
+		idt_ini();
+		push_text(text);
+		pic_remap();
+				
+		while (!input_exec_ready){
+			asm volatile("hlt");
+		}
+		input_exec_ready = 0;
+		input_mode = 0;
+				
+		for (char *p = input_buf_exec; *p != '\0'; p++){
+			filename[i++] = *p;
+		}
+		filename[i] = '\0';
+		push_char('\n');
+		
+		for (int i = 0; i < MAX_FILES; i++){
+			if (mdfs.files[i].used && streq(mdfs.files[i].name, filename) == 0) {
+				strcopy(new_filename, filename);
+				return;
+			}
+		}
+		
+	push_text("Error: file not found!\n");
+	goto INPUT;
+	
+}
+
+void push_hchar(unsigned char ch){
+	if (ch < 10) {
+        ch += '0';
+    } else {
+        ch += 'A' - 10;
+    }
+	
+	push_char(ch);
+}
+
+void push_h32(unsigned int num) {
+    push_hchar((num >> 28) & 0xF);
+    push_hchar((num >> 24) & 0xF);
+    push_hchar((num >> 20) & 0xF);
+    push_hchar((num >> 16) & 0xF);
+
+    push_hchar((num >> 12) & 0xF);
+    push_hchar((num >> 8) & 0xF);
+    push_hchar((num >> 4) & 0xF);
+    push_hchar(num & 0xF);
+}
+
+void PANIC(const char* msg, Registers* reg){
+	asm volatile("cli");
+	
+	cls();
+	
+	push_text(" * * * Moon OS Delta fatal kernel stop * * *\n\n");
+	
+	push_text("The core was stopped unexpectedly!\nReason: ");
+	push_text(msg);
+	push_char('\n');
+	
+	push_text("LAST REGISTERS:\n EAX: ");
+	push_h32(reg->eax);
+	push_text("  ");
+	push_text("EBX: ");
+	push_h32(reg->ebx);
+	push_text("  ");
+	push_text("ECX: ");
+	push_h32(reg->ecx);
+	push_char('\n');
+	
+	push_text("EDX: ");
+	push_h32(reg->edx);
+	push_text("  ");
+	push_text("ESI: ");
+	push_h32(reg->esi);
+	push_text("  ");
+	push_text("EDI: ");
+	push_h32(reg->edi);
+	push_char('\n');
+	
+	push_text("EIP: ");
+	push_h32(reg->eip);
+	push_text("  ");
+	push_text("ESP: ");
+	push_h32(reg->esp);
+	push_text("  ");
+	push_text("EBP: ");
+	push_h32(reg->ebp);
+	push_text("\n\n System halted. Please report this error.\n");
+	
+	while(1) asm volatile("hlt");
 }
