@@ -2,10 +2,7 @@
 // Author - 'Zondrobonie' Ivan, put copyright here ;)
 
 //no more multiboot in C file :(
-
-//set standart cursor position
-static int cur_x = 0;
-static int cur_y = 0;
+#include "multiboot.h"
 
 //define for keyboard port
 #define KEYBOARD_PORT 0x60
@@ -82,10 +79,24 @@ static int cur_y = 0;
 #define MAX_DUMMY_NAME 32
 #define MAX_DUMMY_SIZE 128
 
-struct ComDummy{
-	char name[MAX_DUMMY_NAME];
-    char value[MAX_DUMMY_SIZE];
-	unsigned char used;
+//for memory detecting
+#define MEM_TYPE_AVAIABLE 1
+#define MEM_TYPE_RESERV 2
+#define MEM_TYPE_ACPI 3
+#define MEM_TYPE_NVS 4
+
+struct memory_map_entry {
+	unsigned long long base_addr;
+	unsigned long long lenght;
+	unsigned int type;
+	unsigned int extended_attrs;
+} __attribute__((packed));
+
+struct memory_info {
+	unsigned int total; //in MB
+	unsigned int available; //in MB
+	unsigned int entries_count;
+	struct memory_map_entry entries[32];
 };
 
 // reader keyboard inputs
@@ -234,6 +245,12 @@ typedef struct {
 	unsigned char readonly;
 } StDev;
 
+struct ComDummy{
+	char name[MAX_DUMMY_NAME];
+    char value[MAX_DUMMY_SIZE];
+	unsigned char used;
+};
+
 //struct executor for execute code in *Execute mode*
 
 typedef struct {
@@ -271,6 +288,7 @@ struct IDTent idt[256];
 struct tss_entry tss;
 
 unsigned char kernel_stack[KERNEL_STACK_SIZE] __attribute__((aligned(16)));
+extern unsigned int mlt_inf;
 
 //Keyboard scancodes for work with keyboard
 static const char scancodes[128] = {
@@ -291,6 +309,11 @@ static const char scancodes_sh[128] = {
 	'4', '5', '6', '+', '1', '2', '3', '0', '.', 0, 0, 0, 0, 0
 };
 //init vars...
+
+//set standart cursor position
+static int cur_x = 0;
+static int cur_y = 0;
+
 static char input_buf[BUFFER_SIZE] = {'\0'};
 static char input_buf_exec[BUFFER_SIZE] = {'\0'};
 static unsigned int buf_id = 0;
@@ -325,6 +348,10 @@ static inline unsigned short inw(unsigned short port);
 
 void PANIC(const char* msg, Registers* reg);
 extern int df_handler_entry(void);
+extern int de_handler_entry(void);
+extern int inv_handler_entry(void);
+extern int pf_handler_entry(void);
+extern int gp_handler_entry(void);
 
 void pic_remap();
 
@@ -381,7 +408,6 @@ unsigned char read_cmos_s(unsigned char registr);
 unsigned char bcd_to_bin(unsigned char bcd);
 unsigned char bin_to_bcd(unsigned char bin);
 
-
 Time get_t();
 unsigned int get_unix_t();
 
@@ -402,12 +428,19 @@ unsigned long long get_memory_size();
 void *setmemory(void *ptr, int value, unsigned int number);
 void *memset(void *s, int c, unsigned int n);
 void *copymemory(void *dest, const void *src, unsigned int number);
+
 //function prototypes for get size of screen (vertical and horisontal)
 unsigned short get_vde();
 unsigned short get_hde();
 
-void get_cpu_vendor(char vendor[13]);
+int cpuid_supported();
+void get_cpuid_info(char vendor[13], unsigned int byte);
+void get_cpuid_brand(char brand[49]);
+void get_cpuid_features(unsigned char *family, unsigned char *model, unsigned int *ecxf, unsigned int *edxf);
 
+void pit_ini(unsigned int frequency);
+void speaker_en();
+void speaker_dis();
 void beep(unsigned int freq, unsigned int durations);
 void slp(unsigned int ms);
 
@@ -454,13 +487,19 @@ void mdrw_input_dialog(char *new_filename, Mdrw *editor, const char *text);
 void push_hchar(unsigned char ch);
 void push_h32(unsigned int num);
 
-void krnl_run (void){
+void get_system_info();
+extern int mem_det_entry();
+
+void krnl_run(void){
 	cls();
 	asm volatile("mov %0, %%esp" : : "r"(kernel_stack + KERNEL_STACK_SIZE));
 	
 	gdt_ini();
 	tss_ini();
 	idt_ini();
+	
+	outb(0x43, 0xB6); //PIT INIT
+	
 	gdt_set_tss(5, (unsigned int)&tss, sizeof(tss)-1);
 	asm volatile("ltr %%ax" : : "a"(0x28));
 	
@@ -518,6 +557,10 @@ void set_idt_ent(unsigned char num, unsigned int handler){
 }
 void idt_ini() {
 	set_idt_ent(0x08, (unsigned int)df_handler_entry); //Double fault
+	set_idt_ent(0x00, (unsigned int)de_handler_entry); //Divide Error
+	set_idt_ent(0x06, (unsigned int)inv_handler_entry); //Invalid Opcode
+	set_idt_ent(0x0D, (unsigned int)gp_handler_entry); // General Protection fault
+	set_idt_ent(0x0E, (unsigned int)pf_handler_entry); //Page fault 
 	
 	set_idt_ent(0x21, (unsigned int)keyboard_handler_entry); // keyboard
 	
@@ -630,7 +673,7 @@ void del_back(){
 	cur_move();
 }
 
-void push_char (char ch){
+void push_char(char ch){
 	if (ch == '\n'){
 		cur_x = 0;
 		cur_y++;
@@ -714,7 +757,7 @@ void check_comm(const char* comm){
 	if (streq(comm, "help") == 0){
 		if (args && *args){
 			if (streq(args, "--standart") == 0) {
-				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system\n  rest - reset the system\n  abt - info the system and authors / credits\n  mdver - version the system and devices\n  time <--hms> <--dmy> <--unixt> - print time or date\n  mdrw - open MD READ&WRITE");
+				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system\n  rest - reset the system\n  abt - info the system and authors / credits\n  mdver - version the system\n  time <--hms> <--dmy> <--unixt> - print time or date\n  mdrw - open MD READ&WRITE");
 			}
 			else if (streq(args, "--filew") == 0) {
 				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file\n  erase <filename> - erase all data in file\n  ls - list all files,\n  add <filename> <text> - add text in file\n  rnm <old filename> <new filename> - rename file\n  copyf <filename1> <filename2> - copy data to <filename2>\n  movf <filename1> <filename2> - move data to <filename2>");
@@ -745,36 +788,10 @@ void check_comm(const char* comm){
 		rest();
 	}
 	else if (streq(comm, "abt") == 0) {
-		push_text("\nABOUT:\n  Moon OS Delta\n  programmer and author - 'Zondrobonie' Ivan\n  for news: t.me/MoonOSDelta \n  Special thanks - BFG (chat), Imancat (for code for comdummy) and others...");
+		push_text("\nABOUT:\n  Moon OS Delta\n  programmer and author - 'Zondrobonie' Ivan (a.k.a ItheJ)\n  for news: t.me/MoonOSDelta \n  Special thanks - BFG (chat), Imancat (for code for comdummy) and others...");
 	}
 	else if (streq(comm, "mdver") == 0) {
-		
-		char mem[21];
-		char vend[13];
-		
-		char vde[6];
-		char hde[6];
-		
-		push_text("\nMoon OS Delta\nversion - 1.12 November/December update Vol.2, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta \n\n");
-		
-		push_text("Available memory - ");
-		digtostr(get_memory_size(), mem);
-		push_text(mem);
-		push_text(" KB\n");
-		
-		get_cpu_vendor(vend);
-		push_text("CPU vendor: ");
-		push_text(vend);
-		
-		
-		push_text("\nScreen size: ");
-		digtostr(get_vde(), vde);
-		digtostr(get_hde(), hde);
-		push_text(vde);
-		push_char('x');
-		push_text(hde);
-		
-		
+		get_system_info();
 	}
 	else if (streq(comm, "time") == 0) {
 		push_char('\n');
@@ -1118,7 +1135,7 @@ void check_comm(const char* comm){
 					if (!found){
 						if (comdummy_count < MAX_DUMMY) {
 							//list of reserved names (command names)
-							if (streq(comdummies[comdummy_count].name, "help") == 0 || streq(comdummies[comdummy_count].name, "cls") == 0 || streq(comdummies[comdummy_count].name, "echo") == 0 || streq(comdummies[comdummy_count].name, "logoff") == 0 || streq(comdummies[comdummy_count].name, "rest") == 0 || streq(comdummies[comdummy_count].name, "abt") == 0 || streq(comdummies[comdummy_count].name, "mdver") == 0 || streq(comdummies[comdummy_count].name, "time") == 0 || streq(comdummies[comdummy_count].name, "touch") == 0 || streq(comdummies[comdummy_count].name, "wr") == 0 || streq(comdummies[comdummy_count].name, "rd") == 0 || streq(comdummies[comdummy_count].name, "del") == 0 || streq(comdummies[comdummy_count].name, "erase") == 0 || streq(comdummies[comdummy_count].name, "ls") == 0 || streq(comdummies[comdummy_count].name, "add") == 0 || streq(comdummies[comdummy_count].name, "rnm") == 0 || streq(comdummies[comdummy_count].name, "beep") == 0 || streq(comdummies[comdummy_count].name, "lddsk") == 0 || streq(comdummies[comdummy_count].name, "svdsk") == 0 || streq(comdummies[comdummy_count].name, "lsdevs") == 0 || streq(comdummies[comdummy_count].name, "formt") == 0 || streq(comdummies[comdummy_count].name, "exec") == 0 || streq(comdummies[comdummy_count].name, "comdummy") == 0 || streq(comdummies[comdummy_count].name, "lscomdum") == 0 ||streq(comdummies[comdummy_count].name, "chcomdum") == 0 || streq(comdummies[comdummy_count].name, "hltmode") == 0 ||streq(comdummies[comdummy_count].name, "chdbg") == 0 || streq(comdummies[comdummy_count].name, "timeset") == 0 || streq(comdummies[comdummy_count].name, "mdrw") == 0 || streq(comdummies[comdummy_count].name, "copyf") == 0 || streq(comdummies[comdummy_count].name, "movf") == 0){
+							if (streq(comdummies[comdummy_count].name, "help") == 0 || streq(comdummies[comdummy_count].name, "cls") == 0 || streq(comdummies[comdummy_count].name, "echo") == 0 || streq(comdummies[comdummy_count].name, "logoff") == 0 || streq(comdummies[comdummy_count].name, "rest") == 0 || streq(comdummies[comdummy_count].name, "abt") == 0 || streq(comdummies[comdummy_count].name, "mdver") == 0 || streq(comdummies[comdummy_count].name, "time") == 0 || streq(comdummies[comdummy_count].name, "touch") == 0 || streq(comdummies[comdummy_count].name, "wr") == 0 || streq(comdummies[comdummy_count].name, "rd") == 0 || streq(comdummies[comdummy_count].name, "del") == 0 || streq(comdummies[comdummy_count].name, "erase") == 0 || streq(comdummies[comdummy_count].name, "ls") == 0 || streq(comdummies[comdummy_count].name, "add") == 0 || streq(comdummies[comdummy_count].name, "rnm") == 0 || streq(comdummies[comdummy_count].name, "beep") == 0 || streq(comdummies[comdummy_count].name, "lddsk") == 0 || streq(comdummies[comdummy_count].name, "svdsk") == 0 || streq(comdummies[comdummy_count].name, "lsdevs") == 0 || streq(comdummies[comdummy_count].name, "formt") == 0 || streq(comdummies[comdummy_count].name, "exec") == 0 || streq(comdummies[comdummy_count].name, "comdummy") == 0 || streq(comdummies[comdummy_count].name, "lscomdum") == 0 ||streq(comdummies[comdummy_count].name, "chcomdum") == 0 || streq(comdummies[comdummy_count].name, "hltmode") == 0 ||streq(comdummies[comdummy_count].name, "chdbg") == 0 || streq(comdummies[comdummy_count].name, "timeset") == 0 || streq(comdummies[comdummy_count].name, "mdrw") == 0 || streq(comdummies[comdummy_count].name, "copyf") == 0 || streq(comdummies[comdummy_count].name, "movf") == 0 || streq(comdummies[comdummy_count].name, "mem") == 0){
 								push_text("\nError: Used reserved word in name!");
 								return;
 							}
@@ -1288,7 +1305,13 @@ void check_comm(const char* comm){
 		}
 	}
 	else if (streq(comm, "mdrw") == 0){
-		Mdrw_exec();
+		if (input_mode){
+			push_text("\nRun time warning! Command mdrw blocked in execute mode!");
+			return;
+		}
+		else {
+			Mdrw_exec();
+		}
 	}
 	else if (streq(comm, "copyf") == 0){
 		char* args = comm + 6;
@@ -2010,13 +2033,13 @@ unsigned short get_hde() {
 	return (inb(0x3D5) + 1);
 }
 
-void get_cpu_vendor(char vendor[13]){
+void get_cpuid_info(char vendor[13], unsigned int byte){
 	unsigned int eax, ebx, ecx, edx;
 	
 	asm volatile(
 		"cpuid"
 		: "=b" (ebx), "=c"(ecx), "=d" (edx)
-		: "a" (0)
+		: "a" (byte)
 	);
 	
 	*(unsigned int*)&vendor[0] = ebx;
@@ -2026,20 +2049,11 @@ void get_cpu_vendor(char vendor[13]){
 }
 
 void beep(unsigned int freq, unsigned int durations){
-	unsigned int divisor = 1193180 / freq;
-	
-	outb(0x43, 0xB6);
-	outb(0x42, divisor & 0xFF);
-	outb(0x42, (divisor >> 8) & 0xFF);
-	
-	unsigned char sp_state = inb(0x61);
-	if(sp_state != (sp_state | 3)){
-		outb(0x61, sp_state | 3);
-	}
+	pit_ini(freq);
+	speaker_en();
 	
 	slp(durations);
-	
-	outb(0x61, sp_state & -3);
+	speaker_dis();
 }
 
 int isspace(char symbol){
@@ -3836,7 +3850,210 @@ void PANIC(const char* msg, Registers* reg){
 	push_text("  ");
 	push_text("EBP: ");
 	push_h32(reg->ebp);
+	
+	if (streq("PAGE FAULT!", msg) == 0){
+		unsigned int fault_addr;
+		asm volatile("mov %%cr2, %0" : "=r"(fault_addr));
+
+		push_char('\n');
+		push_text(msg);
+		push_text(" at ");
+		push_h32(fault_addr);
+	}
+	
 	push_text("\n\n System halted. Please report this error.\n");
 	
 	while(1) asm volatile("hlt");
+}
+
+int cpuid_supported(){
+	unsigned int eflags;
+	asm volatile(
+		"pushfl\n\t"
+		"popl %0\n\t"
+		"movl %0, %%ecx\n\t"
+		"xorl $0x200000, %0\n\t"
+		"pushl %0\n\t"
+		"popfl\n\t"
+		"pushfl\n\t"
+		"popl %0\n\t"
+		: "=r" (eflags)
+		:
+		: "ecx"
+	);
+	return (eflags & 0x200000) != 0;
+}
+
+void get_cpuid_brand(char brand[49]){
+	unsigned int eax, ebx, ecx, edx;
+    unsigned int *brand_ptr = (unsigned int*)brand;
+    
+    eax = 0x80000002;
+    asm volatile("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(eax)
+	);
+	
+    *brand_ptr++ = eax;
+    *brand_ptr++ = ebx;
+    *brand_ptr++ = ecx;
+    *brand_ptr++ = edx;
+
+    eax = 0x80000003;
+    asm volatile("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(eax)
+	);
+	
+    *brand_ptr++ = eax;
+    *brand_ptr++ = ebx;
+    *brand_ptr++ = ecx;
+    *brand_ptr++ = edx;
+
+    eax = 0x80000004;
+    asm volatile("cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(eax)
+	);
+	
+    *brand_ptr++ = eax;
+    *brand_ptr++ = ebx;
+    *brand_ptr++ = ecx;
+    *brand_ptr++ = edx;
+}
+
+void get_cpuid_features(unsigned char *family, unsigned char *model, unsigned int *ecxf, unsigned int *edxf){
+	unsigned int eax, ebx, ecx, edx;
+	asm volatile (
+		"cpuid"
+		: "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
+		: "a" (1)
+	);
+	
+	*family = ((eax >> 8) & 0xF);
+	*model = ((eax >> 4) & 0xF);
+	*ecxf = ecx;
+	*edxf = edx;
+}
+
+void get_system_info(){
+	push_text("\nMoon OS Delta\nversion - 1.2 Technical update Vol.1, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta");
+		
+	if (!cpuid_supported()) {
+		push_text("\nWarning: CPU not supported \"cpuid\"");
+	}
+	else {
+		char arr[13];
+		char brand[49];
+			
+		unsigned char family;
+		unsigned char model;
+			
+		char *family_s = "";
+		char *model_s = "";
+			
+		unsigned int ecx, edx;
+			
+		get_cpuid_info(arr, 0);
+		push_text("\n\nCPU vendor: ");
+		push_text(arr);
+		get_cpuid_brand(brand);
+		push_text("\nCPU brand: ");
+		push_text(brand);
+			
+		get_cpuid_features(&family, &model, &ecx, &edx);
+			
+		digtostr(family, family_s);
+		digtostr(model, model_s);
+			
+		push_text("\nCPU Family: ");
+		push_text(family_s);
+		push_text("  Model: ");
+		push_text(model_s);
+			
+		push_text("\nAvailable features: ");
+			
+		if (edx & (1 << 23)) push_text("MMX ");
+			
+		if (edx & (1 << 25)) push_text("SSE ");
+		if (edx & (1 << 26)) push_text("SSE2 ");
+			
+		if (ecx & (1 << 0)) push_text("SSE3 ");
+		if (ecx & (1 << 9)) push_text("SSSE3 ");
+		if (ecx & (1 << 19)) push_text("SSE4.1 ");
+		if (ecx & (1 << 20)) push_text("SSE4.2 ");
+			
+		if (ecx & (1 << 28)) push_text("AVX ");
+	}
+	multiboot_info_t *mbi = (multiboot_info_t *)mlt_inf;
+	
+	char mem_cmos[21];
+	char mem_mbi[21];
+	
+	if (!mbi) {
+		push_text("\n\nMultiboot info not available [total memory will not write]\n");
+	}
+	else {
+		if (mbi->flags & 0x001) {
+			unsigned int total_kb = mbi->mem_lower + mbi->mem_upper;
+			unsigned int total_mb = (total_kb + 1024) / 1024;
+			
+			push_text("\n\nMemory: ");
+			
+			digtostr(total_mb, mem_mbi);
+			push_text(mem_mbi);
+			
+			push_text(" MB total\n");
+			push_text(" - Conventional: ");
+			
+			digtostr(mbi->mem_lower, mem_mbi);
+			push_text(mem_mbi);
+			push_text(" KB (0-640 KB)\n");
+			
+			push_text(" - Extended: ");
+			
+			digtostr(mbi->mem_upper, mem_mbi);
+			push_text(mem_mbi);
+			
+			push_text(" KB (1 MB+)\n");		
+		}
+	}
+	digtostr(get_memory_size(), mem_cmos);
+	
+	push_text("\nMemory (by CMOS): ");
+	push_text(mem_cmos);
+	push_text(" KB)");
+	
+	char vde[6];
+	char hde[6];
+		
+	push_text("\nScreen size: ");
+	digtostr(get_vde(), vde);
+	digtostr(get_hde(), hde);
+	push_text(vde);
+	push_char('x');
+	push_text(hde);
+}
+
+void pit_ini(unsigned int frequency){
+	if (frequency < 20) frequency = 20;
+	if (frequency > 20000) frequency = 20000;
+	
+	unsigned int divisor = 1193180 / frequency;
+	
+	outb(0x43, 0xB6);
+	outb(0x42, divisor & 0xFF);
+	outb(0x42, divisor >> 8);
+}
+
+void speaker_en(){
+	unsigned char state = inb(0x61);
+	if ((state & 0x03) != 0x03) {
+		outb(0x61, state | 0x03);
+	}
+}
+
+void speaker_dis(){
+	unsigned char state = inb(0x61);
+	outb(0x61, state & ~0x03);
 }
