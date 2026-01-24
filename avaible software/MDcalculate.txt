@@ -1,0 +1,8 @@
+touch MDcalculate.mdxt
+wr MDcalculate.mdxt 1*** MDcalculate ***
+add MDcalculate.mdxt 3
+add MDcalculate.mdxt 2
+add MDcalculate.mdxt 7
+add MDcalculate.mdxt 1 is answer.
+add MDcalculate.mdxt 3
+add MDcalculate.mdxt 4
