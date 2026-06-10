@@ -19,4 +19,14 @@ static inline unsigned short inw(unsigned short port){
 	return ret;
 }
 
+static inline void outl(unsigned short port, unsigned int value) {
+    asm volatile ("outl %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline unsigned int inl(unsigned short port) {
+    unsigned int value;
+    asm volatile ("inl %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
 #endif
