@@ -86,11 +86,29 @@ void keyboard_handler(){
 	
 		switch(key_code){
 			case 0x0E:
-				if(buf_id > 0){
-					buf_id--;
-					del_back();
+				
+				if (kbs.lalt){
+					if (buf_id > 4){
+						buf_id -= 4;
+						for (int i = 0; i < 4; i++){
+							del_back();
+						}
+					}
+					else {
+						while(buf_id != 0){
+							del_back();
+							buf_id--;
+						}
+					}
+				}
+				else {
+					if (buf_id > 0){
+						buf_id--;
+						del_back();
+					}
 				}
 				break;
+				
 			case 0x1C:
 				if (!hlt_input_mode){
 					
@@ -230,15 +248,9 @@ void keyboard_handler(){
 				else{
 					if (!hlt_input_mode){
 						
-						if (ascii != 0) {
-						
+						if (ascii != 0 && buf_id < BUFFER_SIZE) {
 							input_buf[buf_id++] = ascii;
 							push_char(ascii);
-						
-							if (buf_id >= BUFFER_SIZE - 1){
-								buf_id = BUFFER_SIZE - 1;
-							}
-					
 						}
 					}
 				}
