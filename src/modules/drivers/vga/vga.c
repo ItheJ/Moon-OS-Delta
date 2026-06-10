@@ -115,3 +115,109 @@ void themes(){
 	
 	push_text("]\"");
 }
+
+void push_number(int number){
+	if (number < 0) {
+        push_char('-');
+        number = -number;
+    }
+	
+    if (number / 10) {
+        push_number(number / 10);
+    }
+    push_char((number % 10 + '0'));
+}
+
+void push_float(float x){
+	int integer_part = (int)x;
+	push_number(integer_part);
+
+	float fractional_part = x - integer_part;
+	if (fractional_part < 0) {
+		fractional_part = -fractional_part;
+	}
+
+	if (fractional_part > 0) {
+		push_char('.');
+
+		fractional_part *= 10;
+		int decimal_digit = (int)fractional_part;
+		push_number(decimal_digit);
+
+		fractional_part -= decimal_digit;
+		for (int i = 0; i < 5; i++) {
+			fractional_part *= 10;
+			decimal_digit = (int)fractional_part;
+			push_number(decimal_digit);
+			fractional_part -= decimal_digit;
+			if (fractional_part == 0) break;
+		}
+	}
+}
+
+void push_format(const char *format, ...){
+    unsigned int *arg = (unsigned int*)(&format + 1);
+    while (*format) {
+        if (*format == '%') {
+            format++;
+            switch (*format) {
+                case 'd': {
+                    push_number((int)(*arg++));
+                    break;
+				}
+				case 'i': {
+					push_number((short)(*arg++));
+                    break;
+				}
+                case 'u': {
+					push_number(*arg++);
+                    break;
+				}
+                case 'X': {
+                    push_hbytes(*arg++, 4);
+                    break;
+                }
+				case 'x': {
+					format++;
+					int byte_len = 4;
+    
+					if (*format >= '0' && *format <= '9') {
+						byte_len = 0;
+						while (*format >= '0' && *format <= '9') {
+							byte_len = byte_len * 10 + (*format - '0');
+							format++;
+						}
+					}
+					if (byte_len > 4 || byte_len <= 0){
+						byte_len = 4;
+					}
+          
+					push_hbytes(*arg++, byte_len);
+					break;
+				}
+				case 'c': {
+					push_char((char)(*arg++));
+					break;
+				}
+				case 's': {
+					push_text((char*)(*arg++));
+					break;
+				}
+                default:
+                    push_char('%');
+                    push_char(*format);
+                    break;
+            }
+            format++;
+        } else {
+            push_char(*format++);
+        }
+    }
+}
+
+void push_hbytes(unsigned int value, int byte_len){
+    for (int i = byte_len * 2 - 1; i >= 0; i--) {
+        unsigned int nibble = (value >> (4 * i)) & 0xF;
+        push_hchar(nibble);
+    }
+}

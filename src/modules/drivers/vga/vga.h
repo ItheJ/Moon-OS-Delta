@@ -4,6 +4,9 @@
 #include "../../drivers/io/io.h"
 #include "../../mdstr/mdstr.h"
 
+typedef unsigned int uintptr;
+typedef int intptr;
+
 void cur_move();
 void scroll_down();
 
@@ -19,5 +22,12 @@ void push_hchar(unsigned char ch);
 void push_h32(unsigned int num);
 
 void themes();
+
+void push_number(int number);
+void push_format(const char *format, ...);
+
+void push_hbytes(unsigned int value, int byte_len);
+
+void push_float(float x);
 
 #endif
