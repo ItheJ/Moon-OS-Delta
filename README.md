@@ -2,7 +2,7 @@ README.md
 
 # Moon OS Delta
 
-(c) 2025 Zondrobonie Иван (ItheJ) - распространяется под лицензией MIT
+(c) 2025-2026 Zondrobonie Иван (ItheJ) - распространяется под лицензией MIT
 
 ## О продукте (на Русском)
 О продукте:
@@ -11,7 +11,7 @@ README.md
 	
 	* Уже реализованы системы ввода/вывода; работа с файлами формата MDFS; создан системный язык MDcode (будет улучшаться); имеется работа с дисками;
 	
-	* Проекту уже больше пяти месяцев.
+	* Проекту уже больше девяти месяцев.
 	
 	* Имеются сборки iso для Vmware и сборки bin файлов для QEMU, а также iso образ подходит для записи на флешку через Rufus.
 
@@ -25,7 +25,7 @@ About the product:
 
 	* Input/output systems have already been implemented; MDFS file handling is supported; the MDcode system language has been created (it will be improved); disk handling is available;
 
-	* The project is over a five months old.
+	* The project is over a nine months old.
 
 	* ISO builds for VMware and bin files for QEMU are available, also ISO build are avaible for flash drive and supports recording to a flash drive by Rufus.
 
