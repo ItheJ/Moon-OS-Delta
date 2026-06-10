@@ -40,5 +40,6 @@ void files_list();
 void *setmemory(void *ptr, int value, unsigned int number);
 void *memset(void *s, int c, unsigned int n);
 void *copymemory(void *dest, const void *src, unsigned int number);
+int memoryeq(const void *s1, const void *s2, unsigned int number);
 
 #endif

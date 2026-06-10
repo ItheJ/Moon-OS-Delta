@@ -21,7 +21,7 @@ int file_cr(const char* filename) {
 	
 	for (int i = 0; i < MAX_FILES; i++){
 		if (mdfs.files[i].used && (streq(mdfs.files[i].name, filename) == 0)) {
-			push_text("\nError: this file is exist before.");
+			push_text("\nError: this file already exists.");
 			return -1;
 		}
 	}
@@ -199,4 +199,16 @@ int file_rnm(const char* old_filename, const char* new_filename){
 		push_text(new_filename);
 		push_text(" is used before!");
 	    return -1;
+}
+
+int memoryeq(const void *s1, const void *s2, unsigned int number){
+    const unsigned char *p1 = (const unsigned char *)s1;
+    const unsigned char *p2 = (const unsigned char *)s2;
+
+    for (unsigned int i = 0; i < number; i++) {
+        if (p1[i] != p2[i]) {
+            return (p1[i] < p2[i]) ? -1 : 1;
+        }
+    }
+    return 0;
 }
