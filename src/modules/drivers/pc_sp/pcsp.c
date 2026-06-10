@@ -8,19 +8,15 @@ void pit_ini(unsigned int frequency){
 	
 	outb(0x43, 0xB6);
 	outb(0x42, divisor & 0xFF);
-	outb(0x42, divisor >> 8);
+	outb(0x42, (divisor >> 8) & 0xFF);
 }
 
 void speaker_en(){
-	unsigned char state = inb(0x61);
-	if ((state & 0x03) != 0x03) {
-		outb(0x61, state | 0x03);
-	}
+	outb(0x61, inb(0x61) | 0x03);
 }
 
 void speaker_dis(){
-	unsigned char state = inb(0x61);
-	outb(0x61, state & ~0x03);
+	outb(0x61, inb(0x61) & ~0x03);
 }
 
 void beep(unsigned int freq, unsigned int durations){
@@ -32,7 +28,7 @@ void beep(unsigned int freq, unsigned int durations){
 }
 
 void slp(unsigned int ms){
-	for (volatile unsigned int i = 0; i < ms * 1000; i++){
+	for (volatile unsigned int i = 0; i < ms * 5000; i++){
 		asm volatile("pause");
 	}
 }
