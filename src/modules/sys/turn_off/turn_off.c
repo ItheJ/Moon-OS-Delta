@@ -16,16 +16,13 @@ void logoff(){
 }
 
 void rest(){
-	asm volatile ("nop");
 	push_text("\nSystem is rebooting...");
 	
 	while(inb(0x64) & 0x02);
 	outb(0x64, 0xFE);
 	
-	asm volatile ("cli");
-	while(1){
-		asm volatile ("hlt");
-	}
+	asm volatile("cli");
+	for(;;) asm volatile("hlt");
 }
 
 void hltmode(){
