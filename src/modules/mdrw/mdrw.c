@@ -245,7 +245,7 @@ void mdrw_input_dialog(char *new_filename, Mdrw *text_ed, const char *text){
 		input_buf[0] = '\0';
 				
 		setmemory(input_buf, 0, sizeof(input_buf));
-		setmemory(input_buf_exec, 0, sizeof(input_buf));
+		setmemory(input_buf_exec, 0, sizeof(input_buf_exec));
 				
 		idt_ini();
 		push_text(text);
