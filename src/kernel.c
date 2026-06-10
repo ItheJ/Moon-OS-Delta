@@ -1,4 +1,4 @@
-// Moon OS Delta 1.2.1
+// Moon OS Delta 1.2.2
 // Author - 'Zondrobonie' Ivan, put copyright here ;)
 
 //no more multiboot in C file :(
@@ -22,6 +22,10 @@
 #include "./modules/lang/mdcode/mdcode.h"
 #include "./modules/sys/gdt/gdt.h"
 #include "./modules/sys/screen/screen.h"
+
+#include "./modules/drivers/pci/pci.h"
+#include "./modules/sys/rand/rand.h"
+#include "./modules/sys/mdmath/mdmath.h"
 
 #define KERNEL_STACK_SIZE 8192
 
@@ -57,11 +61,12 @@ extern unsigned int mlt_inf;
 //init vars...
 volatile unsigned short *video_mem = (volatile unsigned short *)0xB8000; //get videomem address
 MDFS mdfs;
+PCI_bus pci_bus;
 
 KeyBoardState kbs;
 EventQueue GlobalEvQ;
 
-char input_buf[BUFFER_SIZE] = {'\0'};
+char input_buf[BUFFER_SIZE];
 char input_buf_exec[BUFFER_SIZE] = {'\0'};
 unsigned int buf_id = 0;
 
@@ -84,9 +89,11 @@ unsigned int text_col = 0xF;
 unsigned int timer_time = 0;
 unsigned char is_timer_started = 0;
 
-void check_comm(const char* comm);
+Ahci_dev ahci_devs[MAX_AHCI];
 
-int power(int x, int y);
+unsigned int seed = 122;
+
+void check_comm(const char* comm);
 
 void get_system_info();
 void Mdrw_exec();
@@ -105,9 +112,24 @@ void krnl_run(void){
 	gdt_set_tss(5, (unsigned int)&tss, sizeof(tss)-1);
 	asm volatile("ltr %%ax" : : "a"(0x28));
 	
-	push_text("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n        *                *             *                 *            *\n    *           *     MOON OS DELTA             *                      \n         *             (   )              *           *             *  \n *          *                      *                     *        *    \n=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n\n");
+	/*
+	 __  __                    ___  ____       
+	|  \/  | ___   ___  _ __  / _ \/ ___|   *   
+	| |\/| |/ _ \ / _ \| '_ \| | | \___ \      *
+	| |  | | (_) | (_) | | | | |_| |___) |     
+	|_|  |_|\___/ \___/|_| |_|\___/|____/  *
+	 ____       _ _          __  ____    ____    *
+	|  _ \  ___| | |_ __ _  / | |___ \  |___ \     *
+	| | | |/ _ \ | __/ _` | | |   __) |   __) |
+	| |_| |  __/ | || (_| | | |_ / __/ _ / __/   *
+	|____/ \___|_|\__\__,_| |_(_)_____(_)_____|     *
 	
+	*/
+	//"=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n        *                *             *                 *            *\n    *           *     MOON OS DELTA             *                      \n         *             (   )              *           *             *  \n *          *                      *                     *        *    \n=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n\n"
+	push_text(" __  __                    ___  ____       \n|  \\/  | ___   ___  _ __  / _ \\/ ___|   *   \n| |\\/| |/ _ \\ / _ \\| '_ \\| | | \\___ \\      *\n| |  | | (_) | (_) | | | | |_| |___) |     \n|_|  |_|\\___/ \\___/|_| |_|\\___/|____/  *\n ____       _ _          __  ____    ____    *\n|  _ \\  ___| | |_ __ _  / | |___ \\  |___ \\     *\n| | | |/ _ \\ | __/ _` | | |   __) |   __) |\n| |_| |  __/ | || (_| | | |_ / __/ _ / __/   *\n|____/ \\___|_|\\__\\__,_| |_(_)_____(_)_____|     *\n\n");
 	devdetect();
+
+	seed = seeding_rnd(seed, 0xFF);
 	
 	push_text("MoonOS:>> ");
 
@@ -130,19 +152,22 @@ void check_comm(const char* comm){
 	if (streq(comm, "help") == 0){
 		if (args && *args){
 			if (streq(args, "--standart") == 0) {
-				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system,\n  rest - reset the system,\n  abt - info the system and authors / credits,\n  mdver - version the system,\n  time <--hms> <--dmy> <--unixt> - print time or date,\n  mdrw - open MD READ&WRITE,\n  setcolor <color(0-F)><color(0-F)> <--default>,\n  timer <--start> <--stop> <--reset> - start, stop and reset user timer");
+				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls (clear) - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system,\n  rest - reset the system,\n  abt - info the system and authors / credits,\n  mdver - version the system,\n  time <--hms> <--dmy> <--unixt> - print time or date,\n  mdrw - open MD READ&WRITE,\n  setcolor <color(0-F)><color(0-F)> <--default>,\n  timer <--start> <--stop> <--reset> - start, stop and reset user timer");
 			}
 			else if (streq(args, "--filew") == 0) {
-				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file,\n  erase <filename> - erase all data in file,\n  ls - list all files,\n  add <filename> <text> - add text in file,\n  rnm <old filename> <new filename> - rename file,\n  copyf <filename1> <filename2> - copy data to <filename2>,\n  movf <filename1> <filename2> - move data to <filename2>");
+				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file,\n  erase <filename> - erase all data in file,\n  ls - list all files,\n  add <filename> <text> - add text in file,\n  rnm <old filename> <new filename> - rename file,\n  copyf <filename1> <filename2> - copy data to <filename2>,\n  movf <filename1> <filename2> - move data to <filename2>,\n  rdhead <filename> <size> - read first <size> symbols,\n  rdtail <filename> <size> - read last <size> symbols,\n  chsymb <filename> <symbol1> <symbol2>  -  change all <symbol1> to <symbol2> in <filename>");
 			}
 			else if (streq(args, "--advanced") == 0){
-				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal,\n  lddsk <dev> - load data from <dev> to RAM,\n  svdsk - save data from RAM,\n  lsdevs - list of available device,\n  formt <dev> - format <dev> and set MDFS on <dev>,\n  exec <filename> - execute file in MDcode,\n  comdummy <pointer>=<command> - create a custom command,\n  lscomdum - list of created comdummy,\n  chcomdum <pointer>=<command> - change command in comdummy,\n  chdbg - on/off debug mode,\n  timeset<flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date,\n  panic - load Moon Delta fatal kernel stop (advanced)");
+				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal,\n  ldide <dev> - load data from <dev> to RAM,\n  svide <dev> - save data from RAM,\n  lside - list of available device,\n  formtide <dev> - format <dev> and set MDFS on <dev>,\n  exec <filename> - execute file in MDcode,\n  comdummy <pointer>=<command> - create a custom command,\n  lscomdum - list of created comdummy,\n  chcomdum <pointer>=<command> - change command in comdummy,\n  chdbg - on/off debug mode,\n  timeset<flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date,\n  panic - load Moon Delta fatal kernel stop (advanced), \n  pci <--rescan> <--data> <--ahci> - read and work with PCI");
+			}
+			else {
+				push_text("\nUsage: help <--standart> <--filew> <--advanced>");
 			}
 		} else {
 			push_text("\nFor more commands print help <--standart> or help <--filew> or help <--advanced>");
 		}
 	}
-	else if (streq(comm, "cls") == 0) {
+	else if (streq(comm, "cls") == 0 || streq(comm, "clear") == 0) {
 		cls();
 	}
 	else if (streq(comm, "echo") == 0) {
@@ -172,6 +197,8 @@ void check_comm(const char* comm){
 		logoff();
 	}
 	else if (streq(comm, "rest") == 0) {
+		push_text("\nHello! If you read this text you:\na - have computer that do not support the restart\nb - want to see this text in source code\nAnyway, just turn off and turn on your computer.");
+		check_comm("PASS");
 		rest();
 	}
 	else if (streq(comm, "abt") == 0) {
@@ -287,8 +314,8 @@ void check_comm(const char* comm){
 		files_list();
 	}
 	else if (streq(comm, "beep") == 0){
-		unsigned int freq = 1000;
-		unsigned int duration = 200;
+		unsigned int freq = 2000;
+		unsigned int duration = 1000;
     
 		if (args && *args) {
 
@@ -300,41 +327,42 @@ void check_comm(const char* comm){
 			char* dur_str = strtok((void *)0, " ");
         
 			if (!strtodig(freq_str, &freq)) {
-				push_text("\nInvalid frequency format!");
-				return;
+				push_text("\nError: invalid frequency format!");
 			}
-        
-			if (dur_str && !strtodig(dur_str, &duration)) {
-				push_text("\nInvalid duration format!");
-				return;
+			
+			else if (dur_str && !strtodig(dur_str, &duration)) {
+				push_text("\nError: invalid duration format!");
 			}
-
-			if (freq < 20 || freq > 20000 || duration < 10 || duration > 5000) {
-				push_text("\nInvalid parameters! Valid ranges: frequency 20-20000Hz, duration 10-5000ms");
-				return;
+			
+			else if (freq < 20 || freq > 20000 || duration < 10 || duration > 5000) {
+				push_text("\nError: invalid parameters! Valid ranges: frequency 20-20000Hz, duration 10-5000ms");
+			}
+			else {
+				char frq[6];
+				char dur[5];
+				
+				beep(freq, duration);
+				
+				push_text("\nBeep at ");
+				
+				digtostr(freq, frq);
+				digtostr(duration, dur);
+				
+				push_text(frq);
+				push_text("Hz for ");
+				push_text(dur);
+				push_text(" ms");
 			}
 		}
-		
-		char frq[6];
-		char dur[5];
-		
-		beep(freq, duration);
-		
-		push_text("\nBeep at ");
-		
-		digtostr(freq, frq);
-		digtostr(duration, dur);
-		
-		push_text(frq);
-		push_text("Hz for ");
-		push_text(dur);
-		push_text(" ms");
-
+		else {
+			beep(freq, duration);
+			push_text("\nBeep at 2000Hz for 1000 ms");
+		}
 	}
-	else if (streq(comm, "lddsk") == 0){
+	else if (streq(comm, "ldide") == 0){
 		if (args && *args) {
 			if (input_mode){
-				push_text("\nRun time warning! Command lddsk blocked in execute mode!");
+				push_text("\nRun time warning! Command ldide blocked in execute mode!");
 				return;
 			}
 			else {
@@ -342,21 +370,26 @@ void check_comm(const char* comm){
 			}
 		}
 		else {
-			push_text("\nUsage: lddsk <dev>");
+			push_text("\nUsage: ldide <dev>");
 		}
 	}
-	else if (streq(comm, "svdsk") == 0){
-		svdsk();
+	else if (streq(comm, "svide") == 0){
+		if (args && *args) {
+			svdsk(args);
+		}
+		else {
+			push_text("\nUsage: svide <dev>");
+		}
 	}
-	else if (streq(comm, "lsdevs") == 0){
+	else if (streq(comm, "lside") == 0){
 		lsdevs();
 	}
-	else if (streq(comm, "formt") == 0){
+	else if (streq(comm, "formtide") == 0){
 		if (args && *args) {
 			mdfs_format(args);
 		}
 		else {
-			push_text("\nUsage: formt <dev>");
+			push_text("\nUsage: formtide <dev>");
 		}
 	}
 	else if (streq(comm, "add") == 0) {
@@ -522,7 +555,7 @@ void check_comm(const char* comm){
 					if (!found){
 						if (comdummy_count < MAX_DUMMY) {
 							//list of reserved names (command names)
-							if (streq(comdummies[comdummy_count].name, "help") == 0 || streq(comdummies[comdummy_count].name, "cls") == 0 || streq(comdummies[comdummy_count].name, "echo") == 0 || streq(comdummies[comdummy_count].name, "logoff") == 0 || streq(comdummies[comdummy_count].name, "rest") == 0 || streq(comdummies[comdummy_count].name, "abt") == 0 || streq(comdummies[comdummy_count].name, "mdver") == 0 || streq(comdummies[comdummy_count].name, "time") == 0 || streq(comdummies[comdummy_count].name, "touch") == 0 || streq(comdummies[comdummy_count].name, "wr") == 0 || streq(comdummies[comdummy_count].name, "rd") == 0 || streq(comdummies[comdummy_count].name, "del") == 0 || streq(comdummies[comdummy_count].name, "erase") == 0 || streq(comdummies[comdummy_count].name, "ls") == 0 || streq(comdummies[comdummy_count].name, "add") == 0 || streq(comdummies[comdummy_count].name, "rnm") == 0 || streq(comdummies[comdummy_count].name, "beep") == 0 || streq(comdummies[comdummy_count].name, "lddsk") == 0 || streq(comdummies[comdummy_count].name, "svdsk") == 0 || streq(comdummies[comdummy_count].name, "lsdevs") == 0 || streq(comdummies[comdummy_count].name, "formt") == 0 || streq(comdummies[comdummy_count].name, "exec") == 0 || streq(comdummies[comdummy_count].name, "comdummy") == 0 || streq(comdummies[comdummy_count].name, "lscomdum") == 0 ||streq(comdummies[comdummy_count].name, "chcomdum") == 0 || streq(comdummies[comdummy_count].name, "hltmode") == 0 ||streq(comdummies[comdummy_count].name, "chdbg") == 0 || streq(comdummies[comdummy_count].name, "timeset") == 0 || streq(comdummies[comdummy_count].name, "mdrw") == 0 || streq(comdummies[comdummy_count].name, "copyf") == 0 || streq(comdummies[comdummy_count].name, "movf") == 0 || streq(comdummies[comdummy_count].name, "setcolor") == 0 || streq(comdummies[comdummy_count].name, "panic") == 0 || streq(comdummies[comdummy_count].name, "timer") == 0 || streq(comdummies[comdummy_count].name, "PASS") == 0){
+							if (streq(comdummies[comdummy_count].name, "help") == 0 || streq(comdummies[comdummy_count].name, "cls") == 0 || streq(comdummies[comdummy_count].name, "clear") == 0 || streq(comdummies[comdummy_count].name, "echo") == 0 || streq(comdummies[comdummy_count].name, "logoff") == 0 || streq(comdummies[comdummy_count].name, "rest") == 0 || streq(comdummies[comdummy_count].name, "abt") == 0 || streq(comdummies[comdummy_count].name, "mdver") == 0 || streq(comdummies[comdummy_count].name, "time") == 0 || streq(comdummies[comdummy_count].name, "touch") == 0 || streq(comdummies[comdummy_count].name, "wr") == 0 || streq(comdummies[comdummy_count].name, "rd") == 0 || streq(comdummies[comdummy_count].name, "del") == 0 || streq(comdummies[comdummy_count].name, "erase") == 0 || streq(comdummies[comdummy_count].name, "ls") == 0 || streq(comdummies[comdummy_count].name, "add") == 0 || streq(comdummies[comdummy_count].name, "rnm") == 0 || streq(comdummies[comdummy_count].name, "beep") == 0 || streq(comdummies[comdummy_count].name, "ldide") == 0 || streq(comdummies[comdummy_count].name, "svide") == 0 || streq(comdummies[comdummy_count].name, "lside") == 0 || streq(comdummies[comdummy_count].name, "formtide") == 0 || streq(comdummies[comdummy_count].name, "exec") == 0 || streq(comdummies[comdummy_count].name, "comdummy") == 0 || streq(comdummies[comdummy_count].name, "lscomdum") == 0 ||streq(comdummies[comdummy_count].name, "chcomdum") == 0 || streq(comdummies[comdummy_count].name, "hltmode") == 0 ||streq(comdummies[comdummy_count].name, "chdbg") == 0 || streq(comdummies[comdummy_count].name, "timeset") == 0 || streq(comdummies[comdummy_count].name, "mdrw") == 0 || streq(comdummies[comdummy_count].name, "copyf") == 0 || streq(comdummies[comdummy_count].name, "movf") == 0 || streq(comdummies[comdummy_count].name, "setcolor") == 0 || streq(comdummies[comdummy_count].name, "panic") == 0 || streq(comdummies[comdummy_count].name, "timer") == 0 || streq(comdummies[comdummy_count].name, "PASS") == 0){
 								push_text("\nError: Used reserved word in name!");
 								return;
 							}
@@ -688,7 +721,7 @@ void check_comm(const char* comm){
 			
 		}
 		else {
-			push_text("Usage: timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)>");
+			push_text("\nUsage: timeset <flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)>");
 		}
 	}
 	else if (streq(comm, "mdrw") == 0){
@@ -859,7 +892,7 @@ void check_comm(const char* comm){
 		}
 		
 		setmemory(input_buf, 0, sizeof(input_buf));
-		setmemory(input_buf_exec, 0, sizeof(input_buf));
+		setmemory(input_buf_exec, 0, sizeof(input_buf_exec));
 				
 		input_mode = 1;
 		input_exec_ready = 0;
@@ -940,6 +973,178 @@ void check_comm(const char* comm){
 			}
 		}
 	}
+	else if (streq(comm, "pci") == 0){
+		if (args && *args) {
+			if (streq(args, "--rescan") == 0){
+				scan_pci();
+			}
+			else if (streq(args, "--data") == 0){
+				
+				for (int i = 0; i < 256; i++){
+					if (pci_bus.pci_ch[i].used){
+						push_char('\n');
+						push_format("PCI (Bus=%u, Dev=%u, Func=%u):\nVendor=0x%x02, Device=0x%x02, Class=0x%x01, Subclass=0x%x01, ProgIF=0x%x01", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+					}
+				}
+			}
+			else if (streq(args, "--ahci") == 0){
+				int j = 0;
+				for (int i = 0; i < 256; i++){
+					if (pci_bus.pci_ch[i].class_code == 0x01 && pci_bus.pci_ch[i].subclass == 0x06 && pci_bus.pci_ch[i].used){
+						
+						unsigned int bar5 = read_pci_conf(pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, 0x24);
+						
+						push_char('\n');
+						push_format("AHCI (dev ahci%i) (Bus=%u, Dev=%u, Func=%u):\nVendor=0x%x02, Device=0x%x02, Class=0x%x01, Subclass=0x%x01, ProgIF=0x%x01, BAR5=0x%X", j, pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if, bar5);
+						
+						if (j < MAX_AHCI){
+							ahci_devs[j] = (Ahci_dev){
+								.ahci = pci_bus.pci_ch[i],
+								.bar5 = bar5,
+								.number = j
+							};
+							j++;
+						}
+						
+						check_ahci_contr(pci_bus.pci_ch[i]);
+						ls_ahci_ports(pci_bus.pci_ch[i]);
+						chk_ahci_ports(pci_bus.pci_ch[i]);
+					}
+				}
+			}
+		}
+		else {
+			push_text("\nUsage: pci <--rescan> <--data> <--ahci>");
+		}
+	}
+	else if (streq(comm, "rdhead") == 0) {
+		if (args && *args) {
+			int i = 0;
+			
+			char *arg1 = (void *)0;
+			for (i; args[i] != ' '; i++){
+				*(arg1 + i) = args[i];
+			}
+			
+			*(arg1 + i) = 0;
+			char *arg2 = args + i + 1;
+			
+			unsigned int size = 0;
+			
+			if (!strtodig(arg2, &size)) {
+				push_text("\nError: Invalid size parameter!");
+			}
+			else if (size > MAX_FILE_SIZE){
+				push_text("\nError: Invalid size parameter!");
+			}
+			else {
+			
+				char buffer[MAX_FILE_SIZE + 1];
+				int bytes_read = file_read(arg1, buffer, size, 0);
+				
+				if (bytes_read >= 0 && size > 0){
+					buffer[bytes_read] = '\0';
+					push_char('\n');
+					push_text(buffer);
+				}
+				else{		
+					push_text("\nError: file not found!");
+				}
+				
+			}
+			
+		}
+		else {
+			push_text("\nUsage: rdhead <filename> <size>");
+		}
+	}
+	else if (streq(comm, "rdtail") == 0) {
+		if (args && *args) {
+			int i = 0;
+			
+			char *arg1 = (void *)0;
+			for (i; args[i] != ' '; i++){
+				*(arg1 + i) = args[i];
+			}
+			
+			*(arg1 + i) = 0;
+			char *arg2 = args + i + 1;
+			
+			unsigned int size = 0;
+			unsigned char done = 0;
+			
+			if (!strtodig(arg2, &size)) {
+				push_text("\nError: Invalid size parameter!");
+			}
+			else if (size > MAX_FILE_SIZE){
+				push_text("\nError: Invalid size parameter!");
+			}
+			else {
+				for (int i = 0; i < MAX_FILES; i++) {
+					if (mdfs.files[i].used && streq(mdfs.files[i].name, arg1) == 0) {
+						char buffer[MAX_FILE_SIZE + 1];
+						int bytes_read = file_read(arg1, buffer, size, (mdfs.files[i].size - size));
+						
+						if (bytes_read >= 0 && size > 0){
+							buffer[bytes_read] = '\0';
+							push_char('\n');
+							push_text(buffer);
+						}
+						
+						done = 1;
+					}
+				}
+				if (!done){
+					push_text("\nError: file not found!");
+				}
+			}
+			
+		}
+		else {
+			push_text("\nUsage: rdtail <filename> <size>");
+		}
+	}
+	else if (streq(comm, "chsymb") == 0) {
+		if (args && *args) {
+			int i = 0;
+
+			char *arg1 = (void *)0;
+			while (args[i] != ' ' && args[i] != '\0') {
+				*(arg1 + i) = args[i];
+				i++;
+			}
+			*(arg1 + i) = '\0';
+
+			if (args[i] == '\0' || args[i+1] == ' ' || args[i+2] == '\0' || args[i+3] == ' ') {
+				push_text("\nUsage: chsymb <filename> <symbol1> <symbol2>");
+			}
+			else {
+				char *arg2 = args + i + 1;
+				char *arg3 = args + i + 3;
+
+				if (arg2[1] != ' ' || arg3[0] == '\0') {
+					push_text("\nError: symbol1 and symbol2 must be single characters!");
+				}
+				else {
+					char buffer[MAX_FILE_SIZE + 1];
+					int bytes_read = file_read(arg1, buffer, MAX_FILE_SIZE, 0);
+
+					if (bytes_read >= 0) {
+						for (int j = 0; j < bytes_read; j++) {
+							if (buffer[j] == arg2[0]) {
+								buffer[j] = arg3[0];
+							}
+						}
+						file_wr(arg1, buffer, bytes_read);
+					} else {
+						push_text("\nError: file not found!");
+					}
+				}
+			}
+		} else {
+			push_text("\nUsage: chsymb <filename> <symbol1> <symbol2>");
+		}
+	}
 	else if (streq(comm, "PASS") == 0){
 		push_char('\0');
 	}
@@ -959,23 +1164,8 @@ void check_comm(const char* comm){
 	}
 }
 
-int power(int x, int y){
-	int result = 1;
-	
-	if (y < 0){
-		x = 1 / x;
-		y = -y;
-	}
-	
-	for (int i; i < y; i++){
-		result *= x;
-	}
-	
-	return result;
-}
-
 void get_system_info(){
-	push_text("\nMoon OS Delta\nversion - 1.2.1 Core update Vol.2, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta");
+	push_text("\nMoon OS Delta\nversion - 1.2.2 Disk update Vol.3, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta");
 		
 	if (!cpuid_supported()) {
 		push_text("\nWarning: CPU not supported \"cpuid\"");
@@ -1071,6 +1261,10 @@ void get_system_info(){
 	push_text(vde);
 	push_char('x');
 	push_text(hde);
+	
+	seed = seeding_rnd(seed, 0xFF);
+	
+	push_format("\nRandom seed: %u", seed);
 }
 
 void Mdrw_exec(){
