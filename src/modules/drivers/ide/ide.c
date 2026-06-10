@@ -2,269 +2,294 @@
 
 extern MDFS mdfs;
 
-void wait_dsk_ready(){
-	int timeout = 10000;
-	while (timeout--){
-		unsigned char status = inb(IDE_STATUS);
-		
-		if (!(status & ST_BSY) && (status & ST_DRDY)){
-			return;
+int wait_dsk_ready(IDE_channel *dev){
+	int timeout = 5000000;
+	while (timeout--) {
+		unsigned char status = inb(dev->base + 7);
+		if (!(status & 0x80)) {
+			if (status & 0x40) return 1; 
+			else return 0;
 		}
-		
-		if (status & 0x01) {
-			push_text("\nError with worked disk!\n");
-			return;
-		}
-		
 		asm volatile("pause");
 	}
-	
-	push_text("\nTime out!\n");
+	return 0;
 }
 
-int wait_dsk_drq(){
-	int timeout = 10000;
-	while (timeout--){
-		unsigned char status = inb(IDE_STATUS);
-		
-		if (status & ST_DRQ){
-			return 1;
-		}
-		
-		if (status & 0x01) {
-			push_text("\nError with worked disk!\n");
-			return 0;
-		}
-		
-		if (status & ST_BSY){
-			continue;
-		}
-		
+int wait_dsk_drq(IDE_channel *dev){
+	int timeout = 1000000;
+	while (timeout--) {
+		unsigned char status = inb(dev->base + 7);
+		if (status & 0x01) return -1;
+		if (!(status & 0x80) && (status & 0x08)) return 1;
 		asm volatile("pause");
 	}
-	
-	push_text("\nTime out!\n");
+	return 0;
 }
 
-void rd_sector(unsigned int lba, void* buffer){
-	wait_dsk_ready();
-	
+int rd_sector(IDE_channel *dev, unsigned int lba, void* buffer){
+	if (inb(dev->base + 7) & 0x80){
+		push_text("BUSY!\n");
+		return -1;
+	}
 	asm volatile ("cli");
 	
-	outb(IDE_SCTR_CNT, 1);
-	outb(IDE_LBA_LOW, lba & 0xFF);
-	outb(IDE_LBA_MID, (lba >> 8) & 0xFF);
-	outb(IDE_LBA_HIGH, (lba >> 16) & 0xFF);
-	outb(IDE_DRIVE_SEL, 0xE0 | ((lba >> 24) & 0x0F));
-	
-	outb(IDE_COM, COMM_RD);
-	
-	if (!wait_dsk_drq()){
-		asm volatile ("sti");
-		return;
-	}
-	
-	unsigned short* pointer = (unsigned short*)buffer;
-	for(int i = 0; i < 256; i++){
-		pointer[i] = inw(IDE_DATA);
-	}
-	
-	wait_dsk_ready();
+	outb(dev->base + 2, 1);
+    io_delay();
+
+    outb(dev->base + 3, (unsigned char)(lba));
+    io_delay();
+    outb(dev->base + 4, (unsigned char)(lba >> 8));
+    io_delay();
+    outb(dev->base + 5, (unsigned char)(lba >> 16));
+    io_delay();
+
+    unsigned char drive = 0xE0 | (dev->slave << 4) | ((lba >> 24) & 0x0F);
+    outb(dev->base + 6, drive);
+    io_delay();
+
+    outb(dev->base + 7, COMM_RD);
+    io_delay();
+
+    int drq_status = wait_dsk_drq(dev);
+    if (drq_status != 1) {
+        if (drq_status == -1) push_text("\nError: error bit setted\n");
+        else push_text("\nError: time out waiting for DRQ\n");
+        asm volatile("sti");
+        return -1;
+    }
+
+    unsigned short *ptr = (unsigned short*)buffer;
+    for (int i = 0; i < 256; i++) {
+        ptr[i] = inw(dev->base); // data port
+    }
+
+    if (!wait_dsk_ready(dev)) {
+        push_text("\nError: device not ready after read!\n");
+        asm volatile("sti");
+        return -1;
+    }
 	
 	asm volatile ("sti");
+	return 0;
 }
 
-void wr_sector(unsigned int lba, const void* buffer){
-	wait_dsk_ready();
-	
+int wr_sector(IDE_channel *dev, unsigned int lba, const void* buffer){
+
+	if (inb(dev->base + 7) & 0x80){
+		push_text("BUSY!\n");
+		return -1;
+	}
 	asm volatile ("cli");
 	
-	outb(IDE_SCTR_CNT, 1);
-	outb(IDE_LBA_LOW, lba & 0xFF);
-	outb(IDE_LBA_MID, (lba >> 8) & 0xFF);
-	outb(IDE_LBA_HIGH, (lba >> 16) & 0xFF);
-	outb(IDE_DRIVE_SEL, 0xE0 | ((lba >> 24) & 0x0F));
-	
-	outb(IDE_COM, COMM_WR);
-	
-	if (!wait_dsk_drq()){
-		asm volatile("sti");
-		return;
-	}
-	
-	const unsigned short* pointer = (const unsigned short*)buffer;
-	for (int i = 0; i < 256; i++){
-		outw(IDE_DATA, pointer[i]);
-	}
-	
-	wait_dsk_ready();
+	outb(dev->base + 2, 1);
+    io_delay();
+    outb(dev->base + 3, (unsigned char)(lba));
+    io_delay();
+    outb(dev->base + 4, (unsigned char)(lba >> 8));
+    io_delay();
+    outb(dev->base + 5, (unsigned char)(lba >> 16));
+    io_delay();
+
+    unsigned char drive = 0xE0 | (dev->slave << 4) | ((lba >> 24) & 0x0F);
+    outb(dev->base + 6, drive);
+    io_delay();
+
+    outb(dev->base + 7, COMM_WR);
+    io_delay();
+
+    int drq_status = wait_dsk_drq(dev);
+    if (drq_status != 1) {
+        if (drq_status == -1) push_text("\nError: error bit setted\n");
+        else push_text("\nError: time out waiting for DRQ\n");
+        asm volatile("sti");
+        return -1;
+    }
+
+    unsigned short *ptr = (unsigned short*)buffer;
+    for (int i = 0; i < 256; i++) {
+        outw(dev->base, ptr[i]);
+    }
+
+    if (!wait_dsk_ready(dev)) {
+        push_text("\nError: device not available after write\n");
+        asm volatile("sti");
+        return -1;
+    }
 	
 	asm volatile ("sti");
+	return 0;
 }
 
-void mdfs_format(const char * dev_name) {
-	
-	asm volatile("cli");
-	
-	if (in_format){
-		push_text("\nRecursive format call blocked!");
-		in_format = 0;
-		return;
-	}
-	in_format = 1;
-	
-	ide_reset();
-	
-	if (!chkdsk()){
-		push_text("\nNo disk detected! Cannot detected");
-		in_format = 0;
-		return;
-	}
-	
-	if (storage_devices[get_dev(dev_name)].readonly){
-		in_format = 0;
-		push_text("\nCannot format readonly device!");
-		return;
-	}
-	
-	unsigned char superblock_buf[SECTOR_SIZE];
-	setmemory(superblock_buf, 0, sizeof(superblock_buf));
-	
-	struct Superblock* sb = (struct Superblock*)superblock_buf;
-	
-	sb->magic[0] = 'M';
-	sb->magic[1] = 'D';
-	sb->magic[2] = 'F';
-	sb->magic[3] = 'S';
-	
-	sb->version = 1;
-	sb->sector_sz = SECTOR_SIZE;
-	sb->inode_count = 0;
-	sb->free_blocks[0] = 0x3;
-
-	wr_sector(SUPERBLOCK_SECTOR, superblock_buf);
-	
-	unsigned char read_buf[SECTOR_SIZE];
-	rd_sector(SUPERBLOCK_SECTOR, read_buf);
+void mdfs_format(const char *dev_name) {
+    asm volatile("cli");
 	
 	push_char('\n');
 	
-	for (int i = 0; i <= 3; i++){
-		push_text("|");
-		push_char(read_buf[i]);
-		push_text("| ");
-	}
-	
-	unsigned char empty_sector[SECTOR_SIZE];
-	setmemory(empty_sector, 0, sizeof(empty_sector));
-	
-	for (int i = 0; i < DIR_SECTORS; i++){
-		ide_reset();
-		
-		wr_sector(ROOT_DIR_SECTOR + i, empty_sector);
-	}
-	
-	ide_reset();
-	
-	asm volatile("sti");
-	
-	push_text("\nDisk formated!");
-	
-	in_format = 0;
-}
-
-void svdsk(){
-	
-	asm volatile("cli");
-	
-	unsigned int file_count = 0;
-	for (int i = 0; i < MAX_FILES; i++) {
-		if (mdfs.files[i].used){
-			file_count++;
-		}
-	}
-	
-	struct Superblock sb = {
-		.magic = "MDFS",
-		.version = 1,
-		.sector_sz = SECTOR_SIZE,
-		.inode_count = file_count
-	};
-	
-	wr_sector(SUPERBLOCK_SECTOR, &sb);
-	
-	struct DirEntry dir_entries[MAX_FILES];
-	
-	setmemory(dir_entries, 0, sizeof(dir_entries));
-	
-	unsigned int cur_data_sect = DATA_START_SECTOR;
-	
-	for(unsigned int i = 0; i < MAX_FILES; i++){
-		if (mdfs.files[i].used) {
-			strnumbercopy(dir_entries[i].name, mdfs.files[i].name, MAX_FILENAME_LEN - 1);
-			dir_entries[i].name[MAX_FILENAME_LEN - 1] = '\0';
-			
-			dir_entries[i].start_sctr = cur_data_sect;
-			dir_entries[i].size = mdfs.files[i].size;
-			
-			unsigned int sect_count = (mdfs.files[i].size + SECTOR_SIZE - 1) / SECTOR_SIZE;
-			
-			cur_data_sect += sect_count;
-		}
-	}
-	
-	unsigned int dir_sz = MAX_FILES * sizeof(struct DirEntry);
-	unsigned int dir_sectr_count = (dir_sz + SECTOR_SIZE - 1) / SECTOR_SIZE;
-	
-	for (unsigned int i = 0; i < dir_sectr_count; i++){
-		unsigned int cur_sector = ROOT_DIR_SECTOR + i;
-		void *src = (char *)dir_entries + i * SECTOR_SIZE;
-		
-		wr_sector(cur_sector, src);
-	}
-	
-	for (unsigned int i = 0; i < MAX_FILES; i++){
-		if (mdfs.files[i].used){
-			unsigned int file_sectors = (mdfs.files[i].size + SECTOR_SIZE - 1) / SECTOR_SIZE;
-			unsigned int start_sctr = dir_entries[i].start_sctr;
-			
-			for (unsigned int sctr; sctr < file_sectors; sctr++){
-				unsigned int sector = start_sctr + sctr;
-				void *src = (char *)mdfs.files[i].data + sctr * SECTOR_SIZE;
-				unsigned int size = (sctr == file_sectors - 1) ?
-					mdfs.files[i].size % SECTOR_SIZE : SECTOR_SIZE;
-					
-				if (size < SECTOR_SIZE){
-					unsigned char buffer[SECTOR_SIZE];
-					setmemory(buffer, 0, SECTOR_SIZE);
-					copymemory(buffer, src, size);
-					
-					wr_sector(sector, buffer);
-				}
-				else {
-					wr_sector(sector, src);
-				}
-			}
-		}
-	}
-	
-	push_text("\nFilesystem saved successfully!");
-
-	asm volatile("sti");
-}
-
-void lddsk(const char * dev_name){
-	
-	asm volatile ("cli");
-
+    int id = get_dev(dev_name);
 	if (get_dev(dev_name) == -1 || !storage_devices[get_dev(dev_name)].available){
 		push_text("\nError - device not available!");
 		asm volatile ("sti");
 		return;
 	}
 	
+    IDE_channel *dev = &ide_devs[id];
+    
+    if (!chkdsk(dev)) { 
+		push_text("\nError - No disk detected!");
+		return;
+	}
+    
+    unsigned char sb_buf[512] = {0};
+    struct Superblock *sb = (struct Superblock*)sb_buf;
+	
+	copymemory(sb->magic, "MDFS", 4);
+    sb->version = 1;
+    sb->sector_sz = 512;
+    sb->inode_count = 0;
+    sb->free_blocks[0] = 0x3;
+    
+    if (wr_sector(dev, SUPERBLOCK_SECTOR, sb_buf) != 0) {
+        push_text("\nError - write superblock failed!");
+        return;
+    }
+    
+    unsigned char check_buf[512];
+    if (rd_sector(dev, SUPERBLOCK_SECTOR, check_buf) != 0) {
+        push_text("\nError - read back failed");
+        return;
+    }
+    
+    if (memoryeq(sb_buf, check_buf, 4) == 0) {
+        push_text("\nSUCCESS: Superblock verified");
+    } else {
+        push_text("\nError - Superblock mismatch");
+    }
+    
+    unsigned char empty[512] = {0};
+    for (int i = 0; i < DIR_SECTORS; i++) {
+        wr_sector(dev, ROOT_DIR_SECTOR + i, empty);
+    }
+	
+    asm volatile("sti");
+}
+
+void svdsk(const char *dev_name){
+    asm volatile("cli");
+
+    unsigned int file_count = 0;
+    for (int i = 0; i < MAX_FILES; i++) {
+        if (mdfs.files[i].used){
+			file_count++;
+		}
+    }
+
+    IDE_channel *dev = &ide_devs[get_dev(dev_name)];
+
+    int mdfs_status = check_mdfs(dev);
+    if (mdfs_status == -1) {
+        push_text("\nError - reading superblock from device");
+        asm volatile("sti");
+        return;
+    }
+    struct Superblock sb;
+
+    if (mdfs_status == 1) {
+        if (rd_sector(dev, SUPERBLOCK_SECTOR, &sb) != 0) {
+            push_text("\nError - failed to read superblock for update");
+            asm volatile("sti");
+            return;
+        }
+        sb.inode_count = file_count;
+        push_text("\nUpdating existing MDFS...");
+		
+    } else {
+        push_text("\nError - no MDFS detected, formate disk first!");
+        return;
+    }
+    if (wr_sector(dev, SUPERBLOCK_SECTOR, &sb) != 0) {
+        push_text("\nError - failed to write superblock");
+        asm volatile("sti");
+        return;
+    }
+    struct DirEntry dir_entries[MAX_FILES];
+    setmemory(dir_entries, 0, sizeof(dir_entries));
+
+    unsigned int cur_data_sect = DATA_START_SECTOR;
+    for (unsigned int i = 0; i < MAX_FILES; i++) {
+        if (mdfs.files[i].used) {
+            strnumbercopy(dir_entries[i].name, mdfs.files[i].name, MAX_FILENAME_LEN - 1);
+            dir_entries[i].name[MAX_FILENAME_LEN - 1] = '\0';
+            dir_entries[i].start_sctr = cur_data_sect;
+            dir_entries[i].size = mdfs.files[i].size;
+            cur_data_sect += (mdfs.files[i].size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+        }
+    }
+
+    unsigned int dir_sz = MAX_FILES * sizeof(struct DirEntry);
+    unsigned int dir_sectr_count = (dir_sz + SECTOR_SIZE - 1) / SECTOR_SIZE;
+    for (unsigned int i = 0; i < dir_sectr_count; i++) {
+        unsigned int sector = ROOT_DIR_SECTOR + i;
+        void *src = (char*)dir_entries + i * SECTOR_SIZE;
+        if (wr_sector(dev, sector, src) != 0) {
+            push_text("\nError - failed to write directory sector");
+            asm volatile("sti");
+            return;
+        }
+    }
+    for (unsigned int i = 0; i < MAX_FILES; i++) {
+        if (mdfs.files[i].used) {
+            unsigned int file_sectors = (mdfs.files[i].size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+            unsigned int start_sctr = dir_entries[i].start_sctr;
+
+            for (unsigned int s = 0; s < file_sectors; s++) {
+                unsigned int sector = start_sctr + s;
+                void *src = (char*)mdfs.files[i].data + s * SECTOR_SIZE;
+                unsigned int size = (s == file_sectors - 1) ?
+                    (mdfs.files[i].size % SECTOR_SIZE) : SECTOR_SIZE;
+
+                if (size < SECTOR_SIZE) {
+                    unsigned char buffer[SECTOR_SIZE];
+                    setmemory(buffer, 0, SECTOR_SIZE);
+                    copymemory(buffer, src, size);
+					if (wr_sector(dev, sector, buffer) != 0) {
+                        push_text("\nError - failed to write file data");
+                        asm volatile("sti");
+                        return;
+                    }
+                } else {
+                    if (wr_sector(dev, sector, src) != 0) {
+                        push_text("\nError - failed to write file data");
+                        asm volatile("sti");
+                        return;
+                    }
+                }
+            }
+        }
+    }
+	
+	if (dsk_fflush(dev) != 0){
+		push_text("\nWarning - filesystem saved, cache flush failed, data may be unsafe");
+	} else {
+		push_text("\nFilesystem saved successfully!");
+	}
+    
+    asm volatile("sti");
+}
+
+void lddsk(const char * dev_name){
+	
+	asm volatile ("cli");
+
+	if (get_dev(dev_name) == -1){
+		push_text("\nError - device not available!");
+		asm volatile ("sti");
+		return;
+	}
+	
+	IDE_channel *dev = &ide_devs[get_dev(dev_name)];
+	
 	struct Superblock sb;
-	rd_sector(SUPERBLOCK_SECTOR, &sb);
+	rd_sector(dev, SUPERBLOCK_SECTOR, &sb);
 	
 	push_char('\n');
 	
@@ -290,8 +315,8 @@ void lddsk(const char * dev_name){
 
 	
 	for (int i = 0; i < DIR_SECTORS; i++){
-		ide_reset();
-		rd_sector(ROOT_DIR_SECTOR + i, sector_buf);
+		ide_reset(dev);
+		rd_sector(dev, ROOT_DIR_SECTOR + i, sector_buf);
 		
 		int ent_to_copy = ent_per_sectr;
 		if (i == DIR_SECTORS - 1){
@@ -311,7 +336,6 @@ void lddsk(const char * dev_name){
 	for (int i = 0; i < MAX_FILES; i++){
 		if (dir_entries[i].size > 0){
 			if (strsz(dir_entries[i].name) > 0){
-				
 				strnumbercopy(mdfs.files[i].name, dir_entries[i].name, MAX_FILENAME_LEN);
 			
 				mdfs.files[i].size = dir_entries[i].size;
@@ -328,7 +352,7 @@ void lddsk(const char * dev_name){
 			    
 				unsigned int sectors = (dir_entries[i].size + SECTOR_SIZE - 1) / SECTOR_SIZE;
 				for (int s = 0; s < sectors; s++){
-					rd_sector(dir_entries[i].start_sctr + s, mdfs.files[i].data + s * SECTOR_SIZE);
+					rd_sector(dev, dir_entries[i].start_sctr + s, mdfs.files[i].data + s * SECTOR_SIZE);
 				}
 			}
 			else {
@@ -337,77 +361,110 @@ void lddsk(const char * dev_name){
 		}
 	}
 	
-	push_text("\nLddsk successfully end work");
+	push_text("\nLdide successfully end work");
 	
 	asm volatile ("sti");
-	
 }
 
-int chkdsk(){
-	outb(IDE_DRIVE_SEL, 0xE0);
-	outb(IDE_SCTR_CNT, 0);
-	outb(IDE_LBA_LOW, 0);
-	outb(IDE_LBA_MID, 0);
-	outb(IDE_LBA_HIGH, 0);
-	outb(IDE_COM, 0xEC);
-	
-	if (inb(IDE_STATUS) == 0){
-		return 0;
-	}
-	
-	while (1) {
-		unsigned char status = inb(IDE_STATUS);
-		if (status & ST_DRQ) {
-			break;
-		} 
-		if (status & ((inb(IDE_ERR)) | 0x01)) {
-			return 0;
-		}
-	}
-	
-	return 1;
+int chkdsk(IDE_channel *dev){
+	unsigned char sel_drv = (dev->slave ? 0xB0 : 0xA0);
+    outb(dev->base + 6, sel_drv);
+    
+    outb(dev->base + 2, 0);
+    outb(dev->base + 3, 0);
+    outb(dev->base + 4, 0);
+    outb(dev->base + 5, 0);
+    outb(dev->base + 7, 0xEC);
+    
+    unsigned char status = inb(dev->base + 7);
+    if (status == 0) {
+        return 0;
+    }
+    
+    while (1) {
+        status = inb(dev->base + 7);
+        if (status & ST_DRQ) {
+            break;
+        }
+        if (status & (ST_ERR | 0x01)) {
+            return 0;
+        }
+    }
+    
+    for(int i = 0; i < 256; i++) {
+        inw(dev->base);
+    }
+    return 1;
 }
 
 void devdetect(){
+	push_text("[DETECTING IDE DEVICES...]\n");
 	
 	setmemory(&storage_devices, 0, sizeof(storage_devices));
 	dev_count = 0;
 	
-	storage_devices[dev_count] = (StDev){
-		.name = "isovirt",
-		.type = DEV_TYPE_VIRTUAL,
-		.available = 1,
-		.readonly = 1
-	};
-	dev_count++;
+	char ide_name[5];
+	ide_name[0] = 'i';
+	ide_name[1] = 'd';
+	ide_name[2] = 'e';
+	ide_name[3] = '\0';
+	ide_name[4] = '\0';
 	
-	if (chkide()){
-		storage_devices[dev_count] = (StDev){
-			.name = "ide0",
-			.type = DEV_TYPE_IDE,
-			.available = 1,
-			.readonly = 0
-		};
-		dev_count++;
-	}
-}
-
-int chkide(){
-	outb(IDE_DRIVE_SEL, 0xA0);
-	return (inb(IDE_STATUS) != 0xFF);
-}
-
-int get_dev(const char * name){
-	for (int i = 0; i < dev_count; i++){
-		if (strnumbereq(storage_devices[i].name, name, sizeof(storage_devices[i].name)) == 0) {
-			return i;
+	for (int i = 0; i < 4; i++){
+		if (chkide(i)){
+			char dsknum[2];
+			
+			digtostr(i, dsknum);
+			ide_name[3] = dsknum[0];
+			
+			storage_devices[dev_count] = (StDev){
+				.type = DEV_TYPE_IDE,
+				.available = 1,
+				.readonly = 0,
+				.number = i
+			};
+			
+			for (int i = 0; i < 5; i++){
+				storage_devices[dev_count].name[i] = ide_name[i];
+			}
+			
+			push_text("Found IDE dev: ");
+			push_text(ide_name);
+			push_char('\n');
+			dev_count++;
 		}
 	}
+}
+
+int chkide(unsigned char dev_id){
+	IDE_channel *dev = &ide_devs[dev_id];
+	
+	unsigned char sel_drv = 0xA0 | (dev->slave << 4);
+	outb(dev->base + 6, sel_drv);
+	
+	for (int i = 0; i < 4; i++){
+		inb(dev->base + 7);
+	}
+	
+	outb(dev->base + 2, 0x55);
+	outb(dev->base + 3, 0xAA);
+	
+	if(inb(dev->base + 2) == 0x55 && inb(dev->base + 3) == 0xAA){
+		return 1;
+	}
+	return 0;
+}
+
+int get_dev(const char *name){
+	if (streq(name, "ide0") == 0) return 0;
+	if (streq(name, "ide1") == 0) return 1;
+	if (streq(name, "ide2") == 0) return 2;
+	if (streq(name, "ide3") == 0) return 3;
 	return -1;
 }
 
 void lsdevs() {
-	push_text("\nAvailable storage devices:\n");
+	push_text("\nAvailable ide disks:\n");
 	for (int i = 0; i < dev_count; i++){
 		push_text(" - ");
 		push_text(storage_devices[i].name);
@@ -416,12 +473,6 @@ void lsdevs() {
 		switch(storage_devices[i].type){
 			case DEV_TYPE_IDE:
 				push_text("IDE DISK");
-				break;
-			case DEV_TYPE_RAMDSK:
-				push_text("RAMDISK");
-				break;
-			case DEV_TYPE_VIRTUAL:
-				push_text("Virtual disk");
 				break;
 			default:
 				push_text("Unknown device");
@@ -440,11 +491,54 @@ void lsdevs() {
 	}
 }
 
-void ide_reset(){
+void ide_reset(IDE_channel *dev){
 	asm volatile("cli");
-	outb(IDE_COM, 0x04);
-	wait_dsk_ready();
-	outb(IDE_COM, 0x00);
-	wait_dsk_ready();
+	
+	outb(dev->contrl, 0x04);
+	
+	for (int i = 0; i < 5; i++){
+		inb(dev->contrl);
+	}
+	
+	outb(dev->contrl, 0x00);
+	
+	if (wait_dsk_ready(dev) != 0){
+		asm volatile("sti");
+		return;
+	}
+	
 	asm volatile("sti");
+}
+
+void io_delay(){
+	asm volatile("outb %%al, $0x80" : : "a"(0));
+}
+
+int check_mdfs(IDE_channel *dev){
+    struct Superblock sb;
+    if (rd_sector(dev, SUPERBLOCK_SECTOR, &sb) != 0) {
+        return -1;
+    }
+    if (sb.magic[0] == 'M' && sb.magic[1] == 'D' && sb.magic[2] == 'F' && sb.magic[3] == 'S') {
+        return 1;
+    }
+    return 0;
+}
+
+int dsk_fflush(IDE_channel *dev){
+	if (!wait_dsk_ready(dev)){
+		return -1;
+	}
+	outb(dev->base + 7, 0xE7);
+	io_delay();
+	
+	int timeout = 5000000;
+	while (timeout--){
+		unsigned char status = inb(dev->base + 7);
+		if (!(status & 0x80)) {
+			return 0;
+		}
+		asm volatile("pause");
+	}
+	return -1;
 }

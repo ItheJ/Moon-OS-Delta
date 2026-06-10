@@ -6,21 +6,17 @@
 #include "../../sys/mdfs/mdfs.h"
 #include "../../mdstr/mdstr.h"
 
-#define IDE_DATA 0x1F0
-#define IDE_ERR 0x1F1
-#define IDE_SCTR_CNT 0x1F2
-#define IDE_LBA_LOW 0x1F3
-#define IDE_LBA_MID 0x1F4
-#define IDE_LBA_HIGH 0x1F5
-#define IDE_DRIVE_SEL 0x1F6
-#define IDE_COM 0x1F7
-#define IDE_STATUS 0x1F7
+#define IDE_PR_BS 0x1F0
+#define IDE_SL_BS 0x170
+#define IDE_PR_CR 0x3F6
+#define IDE_SL_CR 0x376
 
 #define COMM_RD 0x20
 #define COMM_WR 0x30
 #define ST_BSY 0x80
 #define ST_DRDY 0x40
 #define ST_DRQ 0x08
+#define ST_ERR 0x01
 
 #define SECTOR_SIZE 512
 #define SUPERBLOCK_SECTOR 0
@@ -40,18 +36,24 @@ struct DirEntry {
 	unsigned int reserved;
 };
 
+typedef struct {
+	unsigned short base;
+	unsigned short contrl;
+	unsigned char irq;
+	unsigned char slave;
+} IDE_channel;
+
 typedef enum {
 	DEV_TYPE_NONE,
-	DEV_TYPE_IDE,
-	DEV_TYPE_RAMDSK,
-	DEV_TYPE_VIRTUAL
+	DEV_TYPE_IDE
 } DevType;
 
 typedef struct {
-	char name [12];
+	char name[13];
 	DevType type;
 	unsigned char available;
 	unsigned char readonly;
+	unsigned char number;
 } StDev;
 
 // Superblock - magic fs name (MDFS), version MDFS, sector size, count inodes, bit card (free blocks) and reserved bytes for size Superblock is 512 bytes
@@ -65,28 +67,39 @@ struct Superblock {
 	unsigned int reserved[61];
 };
 
+static IDE_channel ide_devs[4] = {
+	{IDE_PR_BS, IDE_PR_CR, 14, 0},
+	{IDE_PR_BS, IDE_PR_CR, 14, 1},
+	{IDE_SL_BS, IDE_SL_CR, 15, 0},
+	{IDE_SL_BS, IDE_SL_CR, 15, 1}
+};
+
 static StDev storage_devices[MAX_DEVICES];
 static unsigned char dev_count = 0;
 
 static int in_format = 0;
 static struct DirEntry dir_entries[MAX_FILES] __attribute__((aligned(4)));
 
-void wait_dsk_ready();
-int wait_dsk_drq();
+int wait_dsk_ready(IDE_channel *dev);
+int wait_dsk_drq(IDE_channel *dev);
 
-void rd_sector(unsigned int lba, void* buffer);
-void wr_sector(unsigned int lba, const void* buffer);
-void mdfs_format(const char * dev_name);
+int rd_sector(IDE_channel *dev, unsigned int lba, void* buffer);
+int wr_sector(IDE_channel *dev, unsigned int lba, const void* buffer);
+void mdfs_format(const char *dev_name);
 
 void svdsk();
 void lddsk(const char * dev_name);
 
-int chkdsk();
+int chkdsk(IDE_channel *dev);
 void devdetect();
 void lsdevs();
 int get_dev(const char* name);
 
-int chkide();
-void ide_reset();
+int chkide(unsigned char dev_id);
+void ide_reset(IDE_channel *dev);
+
+void io_delay();
+int check_mdfs(IDE_channel *dev);
+int dsk_fflush(IDE_channel *dev);
 
 #endif
