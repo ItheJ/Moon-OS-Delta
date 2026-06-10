@@ -8,6 +8,7 @@
 #include "../../sys/idt/idt.h"
 #include "../../drivers/pc_sp/pcsp.h"
 #include "../../time/time.h"
+#include "../../sys/rand/rand.h"
 
 // operations codes (for MDcode)
 #define OP_PUSH_CHAR 0x00
@@ -29,6 +30,7 @@
 #define OP_SET_REG 0x10
 #define OP_LOAD_REG 0x11
 #define OP_STR_EQ 0x12
+#define OP_RANDOM 0x13
 
 //struct "Executor" for execute code in *Execute mode*
 

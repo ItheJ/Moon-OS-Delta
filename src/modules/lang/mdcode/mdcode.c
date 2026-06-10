@@ -85,7 +85,7 @@ void interpret_program(unsigned char *program){
 			case OP_INPUT: {
 				
 				setmemory(input_buf, 0, sizeof(input_buf));
-				setmemory(input_buf_exec, 0, sizeof(input_buf));
+				setmemory(input_buf_exec, 0, sizeof(input_buf_exec));
 				
 				input_mode = 1;
 				input_exec_ready = 0;
@@ -143,6 +143,7 @@ void interpret_program(unsigned char *program){
 					input_mode = 0;
 					return;
 				}
+				
 				char num1_str[32] = {0};
 				char num2_str[32] = {0};
 				char op = 0;
@@ -178,7 +179,7 @@ void interpret_program(unsigned char *program){
 				while (sp >= 0 && (state.work_stack[sp] == ' ' || state.work_stack[sp] == '\0')) {
 					sp--;
 				}
-				
+
 				while (sp >= 0 && isnumber(state.work_stack[sp])) {
 					num1_str[num1_len++] = state.work_stack[sp];
 					sp--;
@@ -189,7 +190,7 @@ void interpret_program(unsigned char *program){
 					num1_str[i] = num1_str[num1_len - 1 - i];
 					num1_str[num1_len - 1 - i] = temp;
 				}
-				
+
 				if (op == 0) {
 					push_text("\nRun time error: No operator found!\n");
 					input_mode = 0;
@@ -205,15 +206,13 @@ void interpret_program(unsigned char *program){
 					num1 = -num1;
 					sp--;
 				}
-				else{
-					asm("hlt");
-				}
 				
 				for (int i = 0; i < num2_len; i++) {
 					num2 = num2 * 10 + (num2_str[i] - '0');
 				}
 				
 				int answer;
+				
 				switch (op) {
 					case '+': 
 						answer = num1 + num2;
@@ -242,6 +241,8 @@ void interpret_program(unsigned char *program){
 				
 				state.stack_pointer = sp + 1;
 				
+				push_format("num1=%i : %i at %u", num1, answer, state.stack_pointer);
+				
 				if (answer < 0){
 					state.work_stack[state.stack_pointer++] = '-';
 					answer = -answer;
@@ -266,6 +267,18 @@ void interpret_program(unsigned char *program){
 				for (int i = 0; i < digits; i++) {
 					state.work_stack[state.stack_pointer++] = strans[i];
 				}
+				
+				char address[10];
+				digtostr((state.program_c - 1), address);
+				
+				push_text("[DEBUG STACK] - ['");
+				push_text(state.work_stack);
+				push_text("'; command address (for goto) - '");
+				push_text(address);
+				push_text("', OP: '");
+				push_text(opcode_o_arr);
+				push_text(opcode_t_arr);
+				push_text("']\n");
     
 				break;
 
@@ -639,6 +652,18 @@ void interpret_program(unsigned char *program){
 				state.work_stack[state.stack_pointer++] = equal ? '1' : '0';
 				
 				state.program_c++;
+				break;
+			}
+			case OP_RANDOM: {
+				unsigned int rand = seeding_rnd(state.program_c, 0xFF);
+				
+				char rand_str[4];
+				digtostr(rand, rand_str);
+				
+				for (int i = 0; rand_str[i] != '\0'; i++){
+					state.work_stack[state.stack_pointer++] = rand_str[i];
+				}
+				
 				break;
 			}
 			default:
