@@ -76,4 +76,6 @@ int ident_ahci(volatile unsigned int *mem_ahci, int slot, int port);
 int get_ahci(const char *name);
 void ahci_formt(Ahci_dev ahci, int port);
 
+char *class_to_str_pci(unsigned char class, unsigned char subclass);
+
 #endif

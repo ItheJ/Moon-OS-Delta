@@ -176,3 +176,124 @@ int get_ahci(const char *name){
 	if (streq(name, "ahci3") == 0) return 3;
 	return -1;
 }
+
+char *class_to_str_pci(unsigned char class, unsigned char subclass){
+	if (class == 0x01){
+		switch (subclass){
+			case 0x00:
+				return "SCSI";
+			case 0x01:
+				return "IDE";
+			case 0x02:
+				return "FLOPPY";
+			case 0x03:
+				return "IPI BUS";
+			case 0x04:
+				return "RAID";
+			case 0x05:
+				return "ATA";
+			case 0x06:
+				return "AHCI";
+			case 0x07:
+				return "SAS";
+			case 0x08:
+				return "NVM";
+			default:
+				return "NONE";
+		}
+	}
+	else if (class == 0x02){
+		switch (subclass){
+			case 0x00:
+				return "ETHERNET";
+			case 0x01:
+				return "RING TKN";
+			case 0x02:
+				return "FDDI";
+			case 0x03:
+				return "ATM";
+			case 0x04:
+				return "ISDN";
+			case 0x05:
+				return "WldFip";
+			case 0x06:
+				return "PICMG MC 2.14";
+			case 0x07:
+				return "Infband";
+			case 0x08:
+				return "Fabric";
+			default:
+				return "NONE";
+		}
+	}
+	else if (class == 0x03){
+		switch (subclass){
+			case 0x00:
+				return "VGA";
+			case 0x01:
+				return "XGA";
+			case 0x02:
+				return "3D";
+			default:
+				return "NONE";
+		}
+	}
+	else if (class == 0x04){
+		switch (subclass){
+			case 0x00:
+				return "Video Mult";
+			case 0x01:
+				return "Audio Mult";
+			case 0x02:
+				return "Telephony Dev";
+			case 0x03:
+				return "Audio Dev";
+			default:
+				return "NONE";
+		}
+	}
+	else if (class == 0x05){
+		switch (subclass){
+			case 0x00:
+				return "RAM";
+			case 0x01:
+				return "FLASH";
+			default:
+				return "NONE";
+		}
+	}
+	else if (class == 0x06){
+		switch (subclass){
+			case 0x00:
+				return "HOST";
+			case 0x01:
+				return "ISA";
+			case 0x02:
+				return "EISA";
+			case 0x03:
+				return "MCA";
+			case 0x04:
+				return "PCI DOUBLE";
+			case 0x09:
+				return "PCI DOUBLE";
+			default:
+				return "NONE";
+		}
+	}
+	else if (class == 0x09){
+		switch (subclass){
+			case 0x00:
+				return "KEYBOARD";
+			case 0x01:
+				return "PEN";
+			case 0x02:
+				return "MOUSE";
+			case 0x03:
+				return "SCANNER";
+			case 0x04:
+				return "GAMEPORT";
+			default:
+				return "NONE";
+		}
+	}
+}
