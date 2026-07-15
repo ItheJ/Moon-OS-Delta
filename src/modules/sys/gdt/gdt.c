@@ -44,6 +44,6 @@ void gdt_set_tss(int number, unsigned int base, unsigned int limit){
 	gdt[number].base_mid = (base >> 16) & 0xFF;
 	gdt[number].base_high = (base >> 24) & 0xFF;
 	gdt[number].limit_low = limit & 0xFFFF;
-	gdt[number].granularity = ((limit >> 16) & 0x0F) | 0x40;
+	gdt[number].granularity = (limit >> 16) & 0x0F;
 	gdt[number].access = 0x89;
 }
