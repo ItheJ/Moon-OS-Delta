@@ -3,6 +3,8 @@
 
 #include "../../drivers/vga/vga.h"
 #include "../../mdstr/mdstr.h"
+#include "../../drivers/keyboard/keyboard.h"
+#include "../../sys/idt/idt.h"
 
 typedef struct{
 	unsigned int ds;
@@ -13,5 +15,6 @@ typedef struct{
 } Registers;
 
 void PANIC(const char* msg, Registers* reg);
+void RESCUE_CONSOLE(const char* msg, Registers* reg);
 
 #endif
