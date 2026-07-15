@@ -13,6 +13,9 @@ char strchar(const char* str, char c);
 
 int issymbolspace(char symbol);
 int isnumber(char symbol);
+int issymbolletter(char c);
+int issymbolletterlower(char c);
+int issymbolletterupper(char c);
 
 void digtostr(unsigned number, char * buffer);
 void lgtostr(unsigned long number, char * buffer);
@@ -22,5 +25,7 @@ int hextodig(const char *str);
 
 char *lowerl(char *str);
 char lowerlc(char ch);
+
+void eng_ces_ciph(char *text, int shift, int dir);
 
 #endif

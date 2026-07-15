@@ -251,3 +251,31 @@ char lowerlc(char ch){
 	
 	return ch;
 }
+
+int issymbolletter(char c){
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+int issymbolletterlower(char c){
+    return (c >= 'a' && c <= 'z');
+}
+int issymbolletterupper(char c){
+    return (c >= 'A' && c <= 'Z');
+}
+
+void eng_ces_ciph(char *text, int shift, int dir){
+    for (int i = 0; text[i] != '\0'; i++) {
+        if (issymbolletter(text[i])) {
+			
+            char base = issymbolletterlower(text[i]) ? 'a' : 'A';
+            char ch = text[i] - base;
+			
+            if (dir == 1) {
+                ch = (ch + shift) % 26;
+            } else {
+                ch = (ch - shift + 26) % 26;
+            }
+			
+            text[i] = base + ch;
+        }
+    }
+}
