@@ -29,6 +29,8 @@
 
 #define KERNEL_STACK_SIZE 8192
 
+#define MAX_BOOT_ARGS 5
+
 //for memory detecting
 #define MEM_TYPE_AVAIABLE 1
 #define MEM_TYPE_RESERV 2
@@ -89,13 +91,30 @@ unsigned int text_col = 0xF;
 unsigned int timer_time = 0;
 unsigned char is_timer_started = 0;
 
+unsigned int sys_start_time = 0;
+
 Ahci_dev ahci_devs[MAX_AHCI];
 
-unsigned int seed = 122;
+unsigned int seed = 13;
+
+char *bootargs[MAX_BOOT_ARGS];
+unsigned int bootargc = 0;
+
+volatile unsigned int sys_args[MAX_BOOT_ARGS] = {
+	0, // param "noexec"
+	0, // param "rescue"
+	0, // param "withoutlogo" ( :< )
+	0, // param "nopci"
+	0  // param "graphic"
+};
 
 void check_comm(const char* comm);
 
+void bootarg_parse(char *commln);
+void check_bootcomm();
+
 void get_system_info();
+
 void Mdrw_exec();
 
 void krnl_run(void){
@@ -112,24 +131,46 @@ void krnl_run(void){
 	gdt_set_tss(5, (unsigned int)&tss, sizeof(tss)-1);
 	asm volatile("ltr %%ax" : : "a"(0x28));
 	
+	multiboot_info_t *mbi = (multiboot_info_t *)mlt_inf;
+	
+	if (!mbi) {
+		push_text("\n\nMultiboot info not available [loading without args]\n");
+	}
+	else if (mbi->flags & (1 << 2)){
+		bootarg_parse((char *)mbi->cmdline);
+		check_bootcomm();
+	}
+	
 	/*
-	 __  __                    ___  ____       
-	|  \/  | ___   ___  _ __  / _ \/ ___|   *   
-	| |\/| |/ _ \ / _ \| '_ \| | | \___ \      *
-	| |  | | (_) | (_) | | | | |_| |___) |     
-	|_|  |_|\___/ \___/|_| |_|\___/|____/  *
-	 ____       _ _          __  ____    ____    *
-	|  _ \  ___| | |_ __ _  / | |___ \  |___ \     *
-	| | | |/ _ \ | __/ _` | | |   __) |   __) |
-	| |_| |  __/ | || (_| | | |_ / __/ _ / __/   *
-	|____/ \___|_|\__\__,_| |_(_)_____(_)_____|     *
+	
+	/^^       /^^                                      /^^^^       /^^ ^^  
+	/^ /^^   /^^^                                    /^^    /^^  /^^    /^^
+	/^^ /^^ / /^^   /^^       /^^    /^^ /^^       /^^        /^^ /^^      
+	/^^  /^^  /^^ /^^  /^^  /^^  /^^  /^^  /^^     /^^        /^^   /^^    
+	/^^   /^  /^^/^^    /^^/^^    /^^ /^^  /^^     /^^        /^^      /^^ 
+	/^^       /^^ /^^  /^^  /^^  /^^  /^^  /^^       /^^     /^^ /^^    /^^
+	/^^       /^^   /^^       /^^    /^^^  /^^         /^^^^       /^^ ^^  
+																		   
+	/^^^^^               /^^  /^^                                          
+	/^^   /^^            /^^  /^^                 /^^     /^^ /^^          
+	/^^    /^^   /^^     /^^/^/^ /^   /^^          /^^       /^^           
+	/^^    /^^ /^   /^^  /^^  /^^   /^^  /^^       /^^     /^^             
+	/^^    /^^/^^^^^ /^^ /^^  /^^  /^^   /^^       /^^        /^^          
+	/^^   /^^ /^         /^^  /^^  /^^   /^^       /^^          /^^        
+	/^^^^^      /^^^^   /^^^   /^^   /^^ /^^^     /^^^^/^^/^^^^^    
 	
 	*/
 	//"=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n        *                *             *                 *            *\n    *           *     MOON OS DELTA             *                      \n         *             (   )              *           *             *  \n *          *                      *                     *        *    \n=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n\n"
-	push_text(" __  __                    ___  ____       \n|  \\/  | ___   ___  _ __  / _ \\/ ___|   *   \n| |\\/| |/ _ \\ / _ \\| '_ \\| | | \\___ \\      *\n| |  | | (_) | (_) | | | | |_| |___) |     \n|_|  |_|\\___/ \\___/|_| |_|\\___/|____/  *\n ____       _ _          __  ____    ____    *\n|  _ \\  ___| | |_ __ _  / | |___ \\  |___ \\     *\n| | | |/ _ \\ | __/ _` | | |   __) |   __) |\n| |_| |  __/ | || (_| | | |_ / __/ _ / __/   *\n|____/ \\___|_|\\__\\__,_| |_(_)_____(_)_____|     *\n\n");
+	
+	if (!sys_args[2]){
+		push_text("/^^       /^^                                      /^^^^       /^^ ^^  \n/^ /^^   /^^^                                    /^^    /^^  /^^    /^^\n/^^ /^^ / /^^   /^^       /^^    /^^ /^^       /^^        /^^ /^^      \n/^^  /^^  /^^ /^^  /^^  /^^  /^^  /^^  /^^     /^^        /^^   /^^    \n/^^   /^  /^^/^^    /^^/^^    /^^ /^^  /^^     /^^        /^^      /^^ \n/^^       /^^ /^^  /^^  /^^  /^^  /^^  /^^       /^^     /^^ /^^    /^^\n/^^       /^^   /^^       /^^    /^^^  /^^         /^^^^       /^^ ^^  \n   \n/^^^^^               /^^  /^^                                          \n/^^   /^^            /^^  /^^                 /^^     /^^ /^^          \n/^^    /^^   /^^     /^^/^/^ /^   /^^          /^^       /^^           \n/^^    /^^ /^   /^^  /^^  /^^   /^^  /^^       /^^     /^^             \n/^^    /^^/^^^^^ /^^ /^^  /^^  /^^   /^^       /^^        /^^          \n/^^   /^^ /^         /^^  /^^  /^^   /^^       /^^          /^^        \n/^^^^^      /^^^^   /^^^   /^^   /^^ /^^^     /^^^^/^^/^^^^^    \n\n");
+	}
+	
 	devdetect();
 
 	seed = seeding_rnd(seed, 0xFF);
+	
+	sys_start_time = get_unix_t();
 	
 	push_text("MoonOS:>> ");
 
@@ -152,19 +193,30 @@ void check_comm(const char* comm){
 	if (streq(comm, "help") == 0){
 		if (args && *args){
 			if (streq(args, "--standart") == 0) {
-				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> - print this message,\n  cls (clear) - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system,\n  rest - reset the system,\n  abt - info the system and authors / credits,\n  mdver - version the system,\n  time <--hms> <--dmy> <--unixt> - print time or date,\n  mdrw - open MD READ&WRITE,\n  setcolor <color(0-F)><color(0-F)> <--default>,\n  timer <--start> <--stop> <--reset> - start, stop and reset user timer");
+				push_text("\nAvailable commands:\n  help <--standart> <--filew> <--advanced> <--boot> - print this message,\n  cls (clear) - CLear the Screen,\n  echo <text> - print text,\n  logoff - quit from system,\n  rest - reset the system,\n  abt - info the system and authors / credits,\n  mdver - version the system,\n  time <--hms> <--dmy> <--unixt> - print time or date,\n  mdrw - open MD READ&WRITE,\n  setcolor <color(0-F)><color(0-F)> <--default>,\n  timer <--start> <--stop> <--reset> - start, stop and reset user timer");
 			}
 			else if (streq(args, "--filew") == 0) {
 				push_text("\nAvailable commands:\n  touch <filename> - create file,\n  wr <filename> <text> - write text in file,\n  rd <filename> - read file data,\n  del <filename> - delete file,\n  erase <filename> - erase all data in file,\n  ls - list all files,\n  add <filename> <text> - add text in file,\n  rnm <old filename> <new filename> - rename file,\n  copyf <filename1> <filename2> - copy data to <filename2>,\n  movf <filename1> <filename2> - move data to <filename2>,\n  rdhead <filename> <size> - read first <size> symbols,\n  rdtail <filename> <size> - read last <size> symbols,\n  chsymb <filename> <symbol1> <symbol2>  -  change all <symbol1> to <symbol2> in <filename>");
 			}
 			else if (streq(args, "--advanced") == 0){
-				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal,\n  ldide <dev> - load data from <dev> to RAM,\n  svide <dev> - save data from RAM,\n  lside - list of available device,\n  formtide <dev> - format <dev> and set MDFS on <dev>,\n  exec <filename> - execute file in MDcode,\n  comdummy <pointer>=<command> - create a custom command,\n  lscomdum - list of created comdummy,\n  chcomdum <pointer>=<command> - change command in comdummy,\n  chdbg - on/off debug mode,\n  timeset<flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date,\n  panic - load Moon Delta fatal kernel stop (advanced), \n  pci <--rescan> <--data> <--ahci> - read and work with PCI");
+				push_text("\nAvailable commands:\n  beep <frequency> <durations (ms)> - sound a signal,\n  ldide <dev> - load data from <dev> to RAM,\n  svide <dev> - save data from RAM,\n  lside - list of available device,\n  formtide <dev> - format <dev> and set MDFS on <dev>,\n  exec <filename> - execute file in MDcode,\n  comdummy <pointer>=<command> - create a custom command,\n  lscomdum - list of created comdummy,\n  chcomdum <pointer>=<command> - change command in comdummy,\n  chdbg - on/off debug mode,\n  timeset<flag (time/date/unixt)> <time (HH:MM:SS)/date (DD:MM:YYYY)/unixt (unix timestamp)> - set new time/date,\n  panic - load Moon Delta fatal kernel stop (advanced), \n  pci <--rescan> <--data> <--ahci> - read and work with PCI, \n  ces <up|down> <shift> <--text|--file> <text|filename>- encryption using Caesar cipher");
+			}
+			else if (streq(args, "--boot") == 0){
+				push_text("\nCurrent params:\n");
+				
+				push_format("  NOEXEC : %u", sys_args[0]);
+				push_format("\n  RESCUE : %u", sys_args[1]);
+				push_format("\n  WITHOUTLOGO : %u", sys_args[2]);
+				push_format("\n  NOPCI : %u", sys_args[3]);
+				push_format("\n  GRAPHIC (under construction): %u", sys_args[4]);
+				
+				push_text("\n\n  noexec - disable \"exec\" command\n  rescue - get console if you get core error\n  withoutlogo - disable the splash screen during system startup :<\n  nopci - disable PCI commands\n  graphic - under construction");
 			}
 			else {
-				push_text("\nUsage: help <--standart> <--filew> <--advanced>");
+				push_text("\nUsage: help <--standart> <--filew> <--advanced> <--boot>");
 			}
 		} else {
-			push_text("\nFor more commands print help <--standart> or help <--filew> or help <--advanced>");
+			push_text("\nFor more commands print help <--standart> or help <--filew> or help <--advanced> or help <--boot>");
 		}
 	}
 	else if (streq(comm, "cls") == 0 || streq(comm, "clear") == 0) {
@@ -435,48 +487,54 @@ void check_comm(const char* comm){
 		}
     }
 	else if (streq(comm, "exec") == 0){
-		char* args = comm + 5;
-		if (args && *args) {
-			if (strsz(args) < 5 || strnumbereq((args + (strsz(args) - 5)), ".mdxt", 5)){
-				push_text("\nError: incorrect filename! Usage: <filename>.mdxt");
-			}
-			else{
-				if (input_mode){
-					push_text("\nRun time warning! Command exec blocked in execute mode!");
-					return;
-				}
-				else{
-					int i = 0;
-					int is_find = 0;
-				
-					char normalized_name[MAX_FILENAME_LEN];
-					strnumbercopy(normalized_name, args, MAX_FILENAME_LEN);
-    
-					char* end = normalized_name + strsz(normalized_name) - 1;
-					while (end >= normalized_name && (*end == ' ' || *end == '\r' || *end == '\n')) {
-						*end = '\0';
-						end--;
-					}
-				
-					for (i; i < MAX_FILES; i++) {
-						if (mdfs.files[i].used && streq(mdfs.files[i].name, normalized_name) == 0) {
-							is_find = 1;
-							push_char('\n');
-							interpret_program(mdfs.files[i].data);
-							break;
-						}
-					}
-				
-					if (!is_find){
-						push_text("\nFile not found!");
-					}
-				}
-				
-			}
+		if (sys_args[0]){
+			push_text("\nCanceled. Reason: loading system params");
 		}
 		else {
-			push_text("\nUsage: exec <filename>");
+			char* args = comm + 5;
+			if (args && *args) {
+				if (strsz(args) < 5 || strnumbereq((args + (strsz(args) - 5)), ".mdxt", 5)){
+					push_text("\nError: incorrect filename! Usage: <filename>.mdxt");
+				}
+				else{
+					if (input_mode){
+						push_text("\nRun time warning! Command exec blocked in execute mode!");
+						return;
+					}
+					else{
+						int i = 0;
+						int is_find = 0;
+					
+						char normalized_name[MAX_FILENAME_LEN];
+						strnumbercopy(normalized_name, args, MAX_FILENAME_LEN);
+		
+						char* end = normalized_name + strsz(normalized_name) - 1;
+						while (end >= normalized_name && (*end == ' ' || *end == '\r' || *end == '\n')) {
+							*end = '\0';
+							end--;
+						}
+					
+						for (i; i < MAX_FILES; i++) {
+							if (mdfs.files[i].used && streq(mdfs.files[i].name, normalized_name) == 0) {
+								is_find = 1;
+								push_char('\n');
+								interpret_program(mdfs.files[i].data);
+								break;
+							}
+						}
+					
+						if (!is_find){
+							push_text("\nFile not found!");
+						}
+					}
+					
+				}
+			}
+			else {
+				push_text("\nUsage: exec <filename>");
+			}
 		}
+		
 	}
 	else if (streq(comm, "rnm") == 0){
 		char* args = comm + 4;
@@ -891,50 +949,55 @@ void check_comm(const char* comm){
 			return;
 		}
 		
-		setmemory(input_buf, 0, sizeof(input_buf));
-		setmemory(input_buf_exec, 0, sizeof(input_buf_exec));
-				
-		input_mode = 1;
-		input_exec_ready = 0;
-		buf_id = 0;
-		input_buf[0] = '\0';
-		
-		int i = 0;
-		unsigned short reserved;
-		push_text("\nARE YOU SURE? [y/n]");
-		
-		YN_INPUT:
-			idt_ini();
-			push_text("\n> ");
-				
-			pic_remap();
-				
-			while (!input_exec_ready){
-				asm volatile("hlt");
-			}
+		if (sys_args[1]){
+			push_text("\nCanceled. Reason: loading system params");
+		}
+		else {
+			setmemory(input_buf, 0, sizeof(input_buf));
+			setmemory(input_buf_exec, 0, sizeof(input_buf_exec));
+					
+			input_mode = 1;
 			input_exec_ready = 0;
+			buf_id = 0;
+			input_buf[0] = '\0';
 			
-			for (i; input_buf_exec[i] != 'y' || input_buf_exec[i] != 'n'; i++){
-				if (input_buf_exec[i] == 'y'){
-					input_mode = 0;
-					slp(2500);
-					asm volatile (
-						"divl %2" 
-						: "=a" (reserved)
-						: "a" (100), "r" (0) 
-						: "edx"
-					);
-				}
-				else if (input_buf_exec[i] == 'n'){
-					push_text("\nCanceled.");
-					input_mode = 0;
-					goto END;
-				}
-			}
+			int i = 0;
+			unsigned short reserved;
+			push_text("\nARE YOU SURE? [y/n]");
 			
-			goto YN_INPUT;
-		
-		END:
+			YN_INPUT:
+				idt_ini();
+				push_text("\n> ");
+					
+				pic_remap();
+					
+				while (!input_exec_ready){
+					asm volatile("hlt");
+				}
+				input_exec_ready = 0;
+				
+				for (i; input_buf_exec[i] != 'y' || input_buf_exec[i] != 'n'; i++){
+					if (input_buf_exec[i] == 'y'){
+						input_mode = 0;
+						slp(2500);
+						asm volatile (
+							"divl %2" 
+							: "=a" (reserved)
+							: "a" (100), "r" (0) 
+							: "edx"
+						);
+					}
+					else if (input_buf_exec[i] == 'n'){
+						push_text("\nCanceled.");
+						input_mode = 0;
+						goto END;
+					}
+				}
+				
+				goto YN_INPUT;
+			
+			END:
+		}
 	}
 	else if (streq(comm, "timer") == 0){
 		if (args && *args) {
@@ -974,47 +1037,145 @@ void check_comm(const char* comm){
 		}
 	}
 	else if (streq(comm, "pci") == 0){
-		if (args && *args) {
-			if (streq(args, "--rescan") == 0){
-				scan_pci();
-			}
-			else if (streq(args, "--data") == 0){
-				
-				for (int i = 0; i < 256; i++){
-					if (pci_bus.pci_ch[i].used){
-						push_char('\n');
-						push_format("PCI (Bus=%u, Dev=%u, Func=%u):\nVendor=0x%x02, Device=0x%x02, Class=0x%x01, Subclass=0x%x01, ProgIF=0x%x01", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
-					}
-				}
-			}
-			else if (streq(args, "--ahci") == 0){
-				int j = 0;
-				for (int i = 0; i < 256; i++){
-					if (pci_bus.pci_ch[i].class_code == 0x01 && pci_bus.pci_ch[i].subclass == 0x06 && pci_bus.pci_ch[i].used){
-						
-						unsigned int bar5 = read_pci_conf(pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, 0x24);
-						
-						push_char('\n');
-						push_format("AHCI (dev ahci%i) (Bus=%u, Dev=%u, Func=%u):\nVendor=0x%x02, Device=0x%x02, Class=0x%x01, Subclass=0x%x01, ProgIF=0x%x01, BAR5=0x%X", j, pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if, bar5);
-						
-						if (j < MAX_AHCI){
-							ahci_devs[j] = (Ahci_dev){
-								.ahci = pci_bus.pci_ch[i],
-								.bar5 = bar5,
-								.number = j
-							};
-							j++;
-						}
-						
-						check_ahci_contr(pci_bus.pci_ch[i]);
-						ls_ahci_ports(pci_bus.pci_ch[i]);
-						chk_ahci_ports(pci_bus.pci_ch[i]);
-					}
-				}
-			}
+		if (sys_args[3]){
+			push_text("\nCanceled. Reason: loading system params");
 		}
-		else {
-			push_text("\nUsage: pci <--rescan> <--data> <--ahci>");
+		else{
+			if (args && *args) {
+				if (streq(args, "--rescan") == 0){
+					scan_pci();
+				}
+				else if (streq(args, "--data") == 0){
+					int is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x01){
+							if (!is){
+								push_text("\n-=-= Storages =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x03){
+							if (!is){
+								push_text("\n-=-= Display =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x02){
+							if (!is){
+								push_text("\n-=-= Network =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x04){
+							if (!is){
+								push_text("\n-=-= Multimedia =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x05){
+							if (!is){
+								push_text("\n-=-= Memory =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x06){
+							if (!is){
+								push_text("\n-=-= Bridge =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].used && pci_bus.pci_ch[i].class_code == 0x09){
+							if (!is){
+								push_text("\n-=-= Input =-=-");
+								is = 1;
+							}
+							push_char('\n');
+							push_format("Bus=%u, Dev=%u, Func=%u: Vend=0x%x02, Dev=0x%x02,\nClss=0x%x01, Subclss=0x%x01, ProgIF=0x%x01  (", pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if);
+							push_text(class_to_str_pci(pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass));
+							push_char(')');
+						}
+					}
+					is = 0;
+					
+				}
+				else if (streq(args, "--ahci") == 0){
+					int j = 0;
+					for (int i = 0; i < 256; i++){
+						if (pci_bus.pci_ch[i].class_code == 0x01 && pci_bus.pci_ch[i].subclass == 0x06 && pci_bus.pci_ch[i].used){
+							
+							unsigned int bar5 = read_pci_conf(pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, 0x24);
+							
+							push_char('\n');
+							push_format("AHCI (dev ahci%i) (Bus=%u, Dev=%u, Func=%u): Vendor=0x%x02, Device=0x%x02,\nClass=0x%x01, Subclass=0x%x01, ProgIF=0x%x01, BAR5=0x%X", j, pci_bus.pci_ch[i].bus, pci_bus.pci_ch[i].dev, pci_bus.pci_ch[i].func, pci_bus.pci_ch[i].vend_id, pci_bus.pci_ch[i].device_id, pci_bus.pci_ch[i].class_code, pci_bus.pci_ch[i].subclass, pci_bus.pci_ch[i].prog_if, bar5);
+							
+							if (j < MAX_AHCI){
+								ahci_devs[j] = (Ahci_dev){
+									.ahci = pci_bus.pci_ch[i],
+									.bar5 = bar5,
+									.number = j
+								};
+								j++;
+							}
+							
+							check_ahci_contr(pci_bus.pci_ch[i]);
+							ls_ahci_ports(pci_bus.pci_ch[i]);
+							chk_ahci_ports(pci_bus.pci_ch[i]);
+						}
+					}
+				}
+			}
+			else {
+				push_text("\nUsage: pci <--rescan> <--data> <--ahci>");
+			}
 		}
 	}
 	else if (streq(comm, "rdhead") == 0) {
@@ -1145,6 +1306,67 @@ void check_comm(const char* comm){
 			push_text("\nUsage: chsymb <filename> <symbol1> <symbol2>");
 		}
 	}
+	else if (streq(comm, "ces") == 0) {
+		if (args && *args) {
+
+			char *dir = strtok(args, " ");
+			char *shift_str = strtok((void *)0, " ");
+			char *flag = strtok((void *)0, " ");
+			char *input = strtok((void *)0, " ");
+			
+			int shift = 0;
+
+			if (!dir || !shift_str || !flag || !input) {
+				push_text("\nUsage: ces <up|down> <shift> <--text|--file> <text|filename>");
+			}
+			else {
+				strtodig(shift_str, &shift);
+				
+				if (shift <= 0) {
+					push_text("\nError: shift must be a positive number!");
+				}
+				else {
+					int dir_i = (streq(dir, "up") == 0) ? 1 : 0;
+				
+					if (dir_i != 1 && streq(dir, "down") != 0) {
+						push_text("\nError: direction must be 'up' or 'down'!");
+					}
+					else{
+						if (streq(flag, "--text") == 0) {
+							eng_ces_ciph(input, shift, dir_i);
+							push_char('\n');
+							push_text(input);
+						}
+						else if (streq(flag, "--file") == 0) {
+							char buffer[MAX_FILE_SIZE + 1];
+							int bytes_read = file_read(input, buffer, MAX_FILE_SIZE, 0);
+
+							if (bytes_read >= 0) {
+								buffer[bytes_read] = '\0';
+								eng_ces_ciph(buffer, shift, dir_i);
+								push_char('\n');
+								push_text(buffer);
+								
+								if (file_wr(input, buffer, strsz(buffer)) == 0){
+									file_add_data(input, " \n", strsz(" \n"));
+									
+									push_text("\nData wrote in file.");
+								}
+								
+							} else {
+								push_text("\nError: file not found!");
+							}
+						} else {
+							push_text("\nError: invalid argument! Use --text or --file.");
+						}
+					}
+				}
+			}
+		}
+		else {
+			push_text("\nUsage: ces <up|down> <shift> <--text|--file> <text|filename>");
+		}
+	}
 	else if (streq(comm, "PASS") == 0){
 		push_char('\0');
 	}
@@ -1165,7 +1387,7 @@ void check_comm(const char* comm){
 }
 
 void get_system_info(){
-	push_text("\nMoon OS Delta\nversion - 1.2.2 Disk update Vol.3, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta");
+	push_text("\nMoon OS Delta\nversion - 1.3 Super Minor Update, Standart\nNewest version see on github: github.com/ItheJ/Moon-OS-Delta");
 		
 	if (!cpuid_supported()) {
 		push_text("\nWarning: CPU not supported \"cpuid\"");
@@ -1265,6 +1487,10 @@ void get_system_info(){
 	seed = seeding_rnd(seed, 0xFF);
 	
 	push_format("\nRandom seed: %u", seed);
+	
+	unsigned int uptime = get_unix_t() - sys_start_time;
+	
+	push_format("\nUptime: %u hours; %u minutes; %u seconds;", (uptime / 3600), (uptime % 3600 / 60), (uptime % 3600 % 60));
 }
 
 void Mdrw_exec(){
@@ -1448,4 +1674,40 @@ void Mdrw_exec(){
 		setmemory(input_buf, 0, sizeof(input_buf));
 		while (GlobalEvQ.count != 0) ev_q_del();
 		emul_key_press(0x1C);
+}
+
+void bootarg_parse(char *commln){
+	while (*commln && bootargc < MAX_BOOT_ARGS){
+		while (*commln == ' ') commln++;
+		if (*commln == '\0') break;
+		
+		bootargs[bootargc++] = commln;
+		
+		while (*commln != ' ' && *commln != '\0') commln++;
+		if (*commln == ' '){
+			*commln = '\0';
+			commln++;
+		}
+	}
+}
+
+void check_bootcomm(){
+	for (int i = 0; i < bootargc; i++){
+		if (streq(bootargs[i], "noexec") == 0){
+			sys_args[0] = 1;
+		}
+		if (streq(bootargs[i], "rescue") == 0){
+			sys_args[1] = 1;
+		}
+		if (streq(bootargs[i], "withoutlogo") == 0){
+			sys_args[2] = 1;
+		}
+		if (streq(bootargs[i], "nopci") == 0){
+			sys_args[3] = 1;
+		}
+		if (streq(bootargs[i], "graphic") == 0){
+			//under construction
+			sys_args[4] = 1;
+		}
+	}
 }
