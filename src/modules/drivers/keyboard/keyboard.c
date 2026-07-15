@@ -277,3 +277,23 @@ void emul_key_press(unsigned char key){
 		: "ax", "dx"
 	);	
 }
+
+void re_init_keyboard(){
+    while (inb(0x64) & 0x02){
+        inb(0x60);
+    }
+	
+    outb(0x64, 0xFF);
+
+    while (1){
+        unsigned char status = inb(0x64);
+        if (status & 0x01) {
+            unsigned char response = inb(0x60);
+            if (response == 0xFA){
+                break;
+            }
+        }
+    }
+	
+    outb(0x21, inb(0x21) & ~(1 << 1));
+}

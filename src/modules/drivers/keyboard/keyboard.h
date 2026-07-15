@@ -62,5 +62,6 @@ static const char scancodes_sh[128] = {
 void pic_remap();
 void keyboard_handler();
 void emul_key_press(unsigned char key);
+void re_init_keyboard();
 
 #endif
